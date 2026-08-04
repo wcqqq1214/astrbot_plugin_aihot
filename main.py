@@ -443,7 +443,7 @@ class AihotPlugin(Star):
 
     def _int_config(self, key: str, default: int) -> int:
         try:
-            return int(self.config.get(key, default))
+            return max(1, int(self.config.get(key, default)))
         except (TypeError, ValueError):
             return default
 
