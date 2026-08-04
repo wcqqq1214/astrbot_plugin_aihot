@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.triggers.cron import CronTrigger
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
-from astrbot.api.event.filter import PermissionType
+from astrbot.api.event.filter import CustomFilter, PermissionType
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -229,14 +229,49 @@ def format_story(data: dict) -> str:
 # -------------------------------------------------------------- command group
 
 
+class _NotBareAihotFilter(CustomFilter):
+    """Gate the ``aihot`` command group off for the bare invocation.
+
+    AstrBot raises "参数不足" when a command group is called with no
+    subcommand. This filter lets the group handle only subcommands so the
+    bare ``/aihot`` is routed to ``_aihot_bare`` instead.
+    """
+
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        return event.message_str.strip() != "aihot"
+
+
+class _BareAihotFilter(CustomFilter):
+    """Match only the bare ``aihot`` invocation, never ``aihot <subcommand>``."""
+
+    def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
+        return event.is_at_or_wake_command and event.message_str.strip() == "aihot"
+
+
 @filter.command_group("aihot")
 def _aihot_group():
     """AI HOT 聚合指令组。"""
 
 
+# Attach the bare-invocation gate to the group. A group called with no
+# subcommand otherwise replies "参数不足" with the command tree.
+_aihot_group.parent_group.add_custom_filter(_NotBareAihotFilter())
+
+
+@filter.custom_filter(_BareAihotFilter)
+async def _aihot_bare(self, event: AstrMessageEvent):
+    # A bare ``aihot`` (exact match) is routed here instead of the command
+    # group, which would otherwise reply "参数不足" with the command tree.
+    return await _aihot_help(self, event)
+
+
 @_aihot_group.command("help")
 async def _aihot_help(self, event: AstrMessageEvent):
-    text = (
+    return event.plain_result(_help_text())
+
+
+def _help_text() -> str:
+    return (
         "AI HOT 指令：\n"
         "· /aihot items [数量] 最新动态\n"
         "· /aihot hot 热点榜\n"
@@ -244,9 +279,9 @@ async def _aihot_help(self, event: AstrMessageEvent):
         "· /aihot dailies 日报索引\n"
         "· /aihot story <publicId> 事件详情\n"
         "· /aihot search <关键词> 关键词搜索\n"
-        "· /aihot push on|off 每日推送\n\n" + ATTR_TEXT
+        "· /aihot push on|off 每日推送\n"
+        "\n" + ATTR_TEXT
     )
-    return event.plain_result(text)
 
 
 @_aihot_group.command("items")
