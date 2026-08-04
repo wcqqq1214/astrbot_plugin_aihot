@@ -352,7 +352,8 @@ class AihotPlugin(Star):
         self._push_target: str | None = None
 
     async def initialize(self) -> None:
-        """Re-create the HTTP client and re-arm the scheduled push, if enabled."""
+        """(Re)create the HTTP client and re-arm the scheduled push, if enabled."""
+        await self._client.close()
         self._client = AihotClient()
         self._push_target = await self.get_kv_data(PUSH_TARGET_KV, None)
         if self.config.get("push_enable", False) and self._push_target:
