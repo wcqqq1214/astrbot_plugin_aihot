@@ -365,7 +365,13 @@ class AihotPlugin(Star):
     # ----------------------------------------------------------------- push
 
     def _scheduler(self):
-        """The AstrBot APScheduler instance, or None if unavailable."""
+        """The AstrBot APScheduler instance, or None if unavailable.
+
+        Never call ``start()`` on it: CronJobManager owns its lifecycle, and an early
+        start makes CronJobManager.start() raise SchedulerAlreadyRunningError on boot,
+        which kills AstrBot's own cron sync. Jobs added to a stopped scheduler fire
+        once AstrBot starts it during startup.
+        """
         cron = getattr(self.context, "cron_manager", None)
         return getattr(cron, "scheduler", None)
 
@@ -373,8 +379,6 @@ class AihotPlugin(Star):
         scheduler = self._scheduler()
         if scheduler is None:
             return False
-        if not scheduler.running:
-            scheduler.start()
         hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
         tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
         try:
