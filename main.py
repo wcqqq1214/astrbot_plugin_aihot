@@ -76,9 +76,9 @@ def _append_links(
     primary = _link(obj, *primary_keys)
     original = _link(obj, "original")
     if primary:
-        lines.append(f"{indent}{primary_label}: {primary}")
+        lines.append(f"{indent}- {primary_label}: {primary}")
     if original and original != primary:
-        lines.append(f"{indent}原文: {original}")
+        lines.append(f"{indent}- 原文: {original}")
 
 
 def _append_daily_item(lines: list[str], item: dict) -> None:
@@ -89,7 +89,7 @@ def _append_daily_item(lines: list[str], item: dict) -> None:
     lines.append(f"· {title}{suffix}")
     original = _link(item, "original")
     if original:
-        lines.append(f"   原文: {original}")
+        lines.append(f"   - 原文: {original}")
 
 
 # ----------------------------------------------------------------- formatting
@@ -102,14 +102,9 @@ def format_items(data: dict, show: int) -> str:
         return "AI HOT：当前没有符合条件的动态。"
     lines = ["AI HOT 动态"]
     for i, item in enumerate(items[:show], 1):
-        original = item.get("originalTitle") or ""
-        title = item.get("title") or ""
-        # AI HOT caps originalTitle at ~100 chars with "…"; fall back to the
-        # full curated title instead of echoing a truncated original.
-        if original and not original.endswith("…"):
-            title = original
-        if not title:
-            title = "（无标题）"
+        # Use AI HOT's curated Chinese title so the list reads uniformly,
+        # regardless of the source language.
+        title = item.get("title") or "（无标题）"
         lines.append(f"{i}. {title}")
         summary = _clip(item.get("summary"), 80)
         if summary:
@@ -122,7 +117,7 @@ def format_items(data: dict, show: int) -> str:
         if category:
             meta.append(CATEGORY_LABELS.get(category, category))
         if meta:
-            lines.append("   " + "｜".join(meta))
+            lines.append("   - " + "｜".join(meta))
         _append_links(lines, item, primary_label="详情")
     if len(items) > show:
         lines.append(f"…（共 {len(items)} 条，仅显示前 {show} 条）")
@@ -145,7 +140,7 @@ def format_hot_topics(data: dict) -> str:
             meta.append(f"来源：{source}")
         meta.append(f"报道 {topic.get('sourceCount', 0)} 篇")
         meta.append(f"信号 {topic.get('signalCount', 0)}")
-        lines.append("   " + "｜".join(meta))
+        lines.append("   - " + "｜".join(meta))
         _append_links(
             lines, topic, primary_keys=("story", "aihot"), primary_label="事件"
         )
@@ -217,7 +212,7 @@ def format_story(data: dict) -> str:
     for report_item in reversed(story.get("reports") or []):
         original = _link(report_item, "original")
         if original:
-            lines.append(f"原文: {original}")
+            lines.append(f"- 原文: {original}")
             break
     lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
