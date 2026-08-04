@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.triggers.cron import CronTrigger
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.event.filter import PermissionType
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -309,6 +310,7 @@ async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
 
 
 @_aihot_group.command("push")
+@filter.permission_type(PermissionType.ADMIN)
 async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
     if action not in ("on", "off"):
         return event.plain_result(
