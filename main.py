@@ -324,8 +324,7 @@ async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
         await self.put_kv_data(PUSH_TARGET_KV, target)
         self.config["push_enable"] = True
         await self.config.save_config_async()
-        hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
-        tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
+        hh, mm, tz = self._push_schedule()
         return event.plain_result(
             f"已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
         )
@@ -382,15 +381,10 @@ class AihotPlugin(Star):
         scheduler = self._scheduler()
         if scheduler is None:
             return False
-        hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
-        tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
-        try:
-            tzinfo = ZoneInfo(tz)
-        except (KeyError, ValueError):
-            tzinfo = None
+        hh, mm, tz = self._push_schedule()
         scheduler.add_job(
             self._run_push,
-            trigger=CronTrigger(hour=hh, minute=mm, timezone=tzinfo),
+            trigger=CronTrigger(hour=hh, minute=mm, timezone=ZoneInfo(tz)),
             args=[target],
             id=PUSH_JOB_ID,
             replace_existing=True,
@@ -452,6 +446,21 @@ class AihotPlugin(Star):
             return int(self.config.get(key, default))
         except (TypeError, ValueError):
             return default
+
+    def _push_schedule(self) -> tuple[int, int, str]:
+        """Resolve the push time and timezone from config, with fallbacks."""
+        hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
+        tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
+        try:
+            ZoneInfo(tz)
+        except (KeyError, ValueError):
+            logger.warning(
+                "AI HOT invalid push_timezone %r; falling back to %s.",
+                tz,
+                DEFAULT_PUSH_TZ,
+            )
+            tz = DEFAULT_PUSH_TZ
+        return hh, mm, tz
 
     @staticmethod
     def _parse_push_time(raw: str) -> tuple[int, int]:
