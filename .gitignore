@@ -205,3 +205,7 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# AstrBot runtime data written into the plugin root via the local symlink
+# (contains cmd_config.json with credentials — never commit).
+/data/

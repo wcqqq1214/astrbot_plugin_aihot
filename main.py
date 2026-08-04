@@ -59,15 +59,6 @@ def _link(obj: dict | None, *keys: str) -> str | None:
     return None
 
 
-def _attribution_text(obj: dict | None) -> str:
-    """Machine-readable AI HOT provenance (kept per the access terms)."""
-    attr = (obj or {}).get("attribution") or {}
-    name = attr.get("name")
-    if not name:
-        return ""
-    return f"标识：{name}"
-
-
 def _append_links(
     lines: list[str],
     obj: dict | None,
@@ -85,9 +76,9 @@ def _append_links(
     primary = _link(obj, *primary_keys)
     original = _link(obj, "original")
     if primary:
-        lines.append(f"{indent}🔗 {primary_label}: {primary}")
+        lines.append(f"{indent}{primary_label}: {primary}")
     if original and original != primary:
-        lines.append(f"{indent}↪️ 原文: {original}")
+        lines.append(f"{indent}原文: {original}")
 
 
 def _append_daily_item(lines: list[str], item: dict) -> None:
@@ -98,7 +89,7 @@ def _append_daily_item(lines: list[str], item: dict) -> None:
     lines.append(f"· {title}{suffix}")
     original = _link(item, "original")
     if original:
-        lines.append(f"   ↪️ 原文: {original}")
+        lines.append(f"   原文: {original}")
 
 
 # ----------------------------------------------------------------- formatting
@@ -109,9 +100,16 @@ def format_items(data: dict, show: int) -> str:
     items = data.get("items") or []
     if not items:
         return "AI HOT：当前没有符合条件的动态。"
-    lines = ["📌 AI HOT 动态"]
+    lines = ["AI HOT 动态"]
     for i, item in enumerate(items[:show], 1):
-        title = item.get("title") or "（无标题）"
+        original = item.get("originalTitle") or ""
+        title = item.get("title") or ""
+        # AI HOT caps originalTitle at ~100 chars with "…"; fall back to the
+        # full curated title instead of echoing a truncated original.
+        if original and not original.endswith("…"):
+            title = original
+        if not title:
+            title = "（无标题）"
         lines.append(f"{i}. {title}")
         summary = _clip(item.get("summary"), 80)
         if summary:
@@ -123,15 +121,12 @@ def format_items(data: dict, show: int) -> str:
         category = item.get("category")
         if category:
             meta.append(CATEGORY_LABELS.get(category, category))
-        attr = _attribution_text(item)
-        if attr:
-            meta.append(attr)
         if meta:
             lines.append("   " + "｜".join(meta))
         _append_links(lines, item, primary_label="详情")
     if len(items) > show:
         lines.append(f"…（共 {len(items)} 条，仅显示前 {show} 条）")
-    lines.append(ATTR_TEXT)
+    lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
 
@@ -140,7 +135,7 @@ def format_hot_topics(data: dict) -> str:
     items = data.get("items") or []
     if not items:
         return "AI HOT：当前没有热点话题。"
-    lines = [f"🔥 AI HOT 热点榜（{data.get('count') or len(items)}）"]
+    lines = [f"AI HOT 热点榜（{data.get('count') or len(items)}）"]
     for topic in items[:10]:
         title = topic.get("title") or "（无标题）"
         lines.append(f"{topic.get('rank', '?')}. {title}")
@@ -154,7 +149,7 @@ def format_hot_topics(data: dict) -> str:
         _append_links(
             lines, topic, primary_keys=("story", "aihot"), primary_label="事件"
         )
-    lines.append(ATTR_TEXT)
+    lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
 
@@ -163,7 +158,7 @@ def format_daily(data: dict) -> str:
     report = data.get("report") or {}
     if not report:
         return "AI HOT：暂无可用的日报。"
-    lines = [f"📰 AI HOT 日报 {report.get('date', '')}".rstrip()]
+    lines = [f"AI HOT 日报 {report.get('date', '')}".rstrip()]
     lead = report.get("lead")
     if lead:
         title = (lead.get("title") or "").strip()
@@ -183,7 +178,7 @@ def format_daily(data: dict) -> str:
         for flash in flashes[:5]:
             _append_daily_item(lines, flash)
     _append_links(lines, report, indent="", primary_label="日报")
-    lines.append(ATTR_TEXT)
+    lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
 
@@ -192,12 +187,12 @@ def format_dailies_index(data: dict) -> str:
     entries = data.get("items") or []
     if not entries:
         return "AI HOT：暂无日报索引。"
-    lines = ["🗓️ AI HOT 日报索引"]
+    lines = ["AI HOT 日报索引"]
     for entry in entries[:20]:
         date = entry.get("date", "")
         lead = _clip(entry.get("leadTitle"), 60)
         lines.append(f"· {date} {lead}".rstrip())
-    lines.append(ATTR_TEXT)
+    lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
 
@@ -208,13 +203,13 @@ def format_story(data: dict) -> str:
         return "AI HOT：未找到该事件。"
     title = story.get("title") or "（无标题）"
     status = _STATUS_LABELS.get(story.get("status", ""), story.get("status", ""))
-    lines = [f"📖 {title}（{status}）".rstrip()]
+    lines = [f"{title}（{status}）".rstrip()]
     digest = _clip(story.get("digest"), 300)
     if digest:
         lines.append(digest)
     latest = _clip(story.get("latest"), 150)
     if latest:
-        lines.append(f"🕑 最新进展：{latest}")
+        lines.append(f"最新进展：{latest}")
     lines.append(
         f"· 报道 {story.get('reportCount', 0)} 篇｜来源 {story.get('sourceCount', 0)} 个"
     )
@@ -222,9 +217,9 @@ def format_story(data: dict) -> str:
     for report_item in reversed(story.get("reports") or []):
         original = _link(report_item, "original")
         if original:
-            lines.append(f"↪️ 原文: {original}")
+            lines.append(f"原文: {original}")
             break
-    lines.append(ATTR_TEXT)
+    lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
 
@@ -302,7 +297,7 @@ async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
     def _search_formatter(data: dict) -> str:
         if not (data.get("items") or []):
             return f"AI HOT：没有找到与“{keyword}”相关的动态。"
-        return format_items(data, show).replace("📌 AI HOT 动态", f"🔎 搜索“{keyword}”")
+        return format_items(data, show).replace("AI HOT 动态", f"搜索“{keyword}”")
 
     return await self._run(
         event,
@@ -328,14 +323,14 @@ async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
         hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
         tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
         return event.plain_result(
-            f"✅ 已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
+            f"已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
         )
     self._unschedule_push()
     self._push_target = None
     await self.delete_kv_data(PUSH_TARGET_KV)
     self.config["push_enable"] = False
     await self.config.save_config_async()
-    return event.plain_result("❌ 已关闭 AI HOT 每日推送。")
+    return event.plain_result("已关闭 AI HOT 每日推送。")
 
 
 # --------------------------------------------------------------------- plugin
