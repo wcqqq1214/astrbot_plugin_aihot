@@ -125,7 +125,7 @@ def format_items(data: dict, show: int) -> str:
             lines.append("   - " + "｜".join(meta))
         _append_links(lines, item, primary_label="详情")
     if len(items) > show:
-        lines.append(f"…（共 {len(items)} 条，仅显示前 {show} 条）")
+        lines.append(f"…（已返回 {len(items)} 条，仅显示前 {show} 条）")
     lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
 
