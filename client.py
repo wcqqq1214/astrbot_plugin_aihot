@@ -43,7 +43,6 @@ VALID_MODES = ("selected", "all")
 VALID_WINDOWS = ("24h", "7d")
 VALID_BY = ("timeline", "published")
 VALID_CATEGORIES = ("ai-models", "ai-products", "industry", "paper", "tip")
-VALID_FIELDS = ("default", "minimal")
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -263,33 +262,3 @@ class AihotClient:
         except ValueError:
             raise ValueError("date must be a real YYYY-MM-DD calendar date") from None
         return await self._get(f"/api/v1/dailies/{date}")
-
-    # ------------------------------------------------------- selected sync
-
-    async def get_selected_snapshot(
-        self,
-        *,
-        fields: str = "default",
-        limit: int = 500,
-        page: str | None = None,
-    ) -> dict:
-        """One-time bootstrap for a complete local copy of the selected set."""
-        if fields not in VALID_FIELDS:
-            raise ValueError(f"fields must be one of: {', '.join(VALID_FIELDS)}")
-        if not 1 <= limit <= 1000:
-            raise ValueError("limit must be 1-1000")
-        params: dict[str, Any] = {"fields": fields, "limit": limit}
-        if page:
-            params["page"] = page
-        return await self._get("/api/v1/selected/snapshot", params=params)
-
-    async def get_selected_changes(self, *, cursor: str, limit: int = 100) -> dict:
-        """Atomic additions, edits and removals since a ledger cursor."""
-        if not cursor:
-            raise ValueError("cursor is required for selected changes")
-        if not 1 <= limit <= 100:
-            raise ValueError("limit must be 1-100")
-        return await self._get(
-            "/api/v1/selected/changes",
-            params={"cursor": cursor, "limit": limit},
-        )

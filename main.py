@@ -59,6 +59,48 @@ def _link(obj: dict | None, *keys: str) -> str | None:
     return None
 
 
+def _attribution_text(obj: dict | None) -> str:
+    """Machine-readable AI HOT provenance (kept per the access terms)."""
+    attr = (obj or {}).get("attribution") or {}
+    name = attr.get("name")
+    if not name:
+        return ""
+    return f"标识：{name}"
+
+
+def _append_links(
+    lines: list[str],
+    obj: dict | None,
+    *,
+    indent: str = "   ",
+    primary_keys: tuple[str, ...] = ("aihot",),
+    primary_label: str = "详情",
+) -> None:
+    """Append the AI HOT in-site link and the third-party original link.
+
+    The AI HOT terms require redistribution to retain the original entry
+    link, and ask users to verify facts against the original source, so
+    both are rendered whenever present.
+    """
+    primary = _link(obj, *primary_keys)
+    original = _link(obj, "original")
+    if primary:
+        lines.append(f"{indent}🔗 {primary_label}: {primary}")
+    if original and original != primary:
+        lines.append(f"{indent}↪️ 原文: {original}")
+
+
+def _append_daily_item(lines: list[str], item: dict) -> None:
+    """Render one daily report item/flash with its original entry link."""
+    title = item.get("title") or "（无标题）"
+    source = _source_name(item)
+    suffix = f"（{source}）" if source else ""
+    lines.append(f"· {title}{suffix}")
+    original = _link(item, "original")
+    if original:
+        lines.append(f"   ↪️ 原文: {original}")
+
+
 # ----------------------------------------------------------------- formatting
 
 
@@ -81,11 +123,12 @@ def format_items(data: dict, show: int) -> str:
         category = item.get("category")
         if category:
             meta.append(CATEGORY_LABELS.get(category, category))
+        attr = _attribution_text(item)
+        if attr:
+            meta.append(attr)
         if meta:
             lines.append("   " + "｜".join(meta))
-        url = _link(item, "aihot")
-        if url:
-            lines.append(f"   🔗 {url}")
+        _append_links(lines, item, primary_label="详情")
     if len(items) > show:
         lines.append(f"…（共 {len(items)} 条，仅显示前 {show} 条）")
     lines.append(ATTR_TEXT)
@@ -108,9 +151,9 @@ def format_hot_topics(data: dict) -> str:
         meta.append(f"报道 {topic.get('sourceCount', 0)} 篇")
         meta.append(f"信号 {topic.get('signalCount', 0)}")
         lines.append("   " + "｜".join(meta))
-        url = _link(topic, "story", "aihot")
-        if url:
-            lines.append(f"   🔗 {url}")
+        _append_links(
+            lines, topic, primary_keys=("story", "aihot"), primary_label="事件"
+        )
     lines.append(ATTR_TEXT)
     return "\n".join(lines)
 
@@ -133,21 +176,13 @@ def format_daily(data: dict) -> str:
     for section in sections[:3]:
         lines.append(f"【{section.get('label') or '要闻'}】")
         for item in (section.get("items") or [])[:5]:
-            title = item.get("title") or "（无标题）"
-            source = _source_name(item)
-            suffix = f"（{source}）" if source else ""
-            lines.append(f"· {title}{suffix}")
+            _append_daily_item(lines, item)
     flashes = report.get("flashes") or []
     if flashes:
         lines.append("【快讯】")
         for flash in flashes[:5]:
-            title = flash.get("title") or ""
-            source = _source_name(flash)
-            suffix = f"（{source}）" if source else ""
-            lines.append(f"· {title}{suffix}")
-    url = _link(report, "aihot")
-    if url:
-        lines.append(f"🔗 {url}")
+            _append_daily_item(lines, flash)
+    _append_links(lines, report, indent="", primary_label="日报")
     lines.append(ATTR_TEXT)
     return "\n".join(lines)
 
@@ -183,9 +218,12 @@ def format_story(data: dict) -> str:
     lines.append(
         f"· 报道 {story.get('reportCount', 0)} 篇｜来源 {story.get('sourceCount', 0)} 个"
     )
-    url = _link(story, "aihot")
-    if url:
-        lines.append(f"🔗 {url}")
+    _append_links(lines, story, indent="", primary_label="详情")
+    for report_item in reversed(story.get("reports") or []):
+        original = _link(report_item, "original")
+        if original:
+            lines.append(f"↪️ 原文: {original}")
+            break
     lines.append(ATTR_TEXT)
     return "\n".join(lines)
 
@@ -216,73 +254,61 @@ async def _aihot_help(self, event: AstrMessageEvent):
 @_aihot_group.command("items")
 async def _aihot_items(self, event: AstrMessageEvent, limit: int = 10):
     show = self._int_config("items_show_limit", 10)
-    try:
-        data = await self._client.get_items(limit=limit)
-    except ValueError as exc:
-        return event.plain_result(f"参数有误：{exc}")
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    return event.plain_result(format_items(data, min(limit, show)))
+    return await self._run(
+        event,
+        lambda: self._client.get_items(limit=limit),
+        lambda data: format_items(data, min(limit, show)),
+    )
 
 
 @_aihot_group.command("hot")
 async def _aihot_hot(self, event: AstrMessageEvent):
-    try:
-        data = await self._client.get_hot_topics()
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    return event.plain_result(format_hot_topics(data))
+    return await self._run(event, self._client.get_hot_topics, format_hot_topics)
 
 
 @_aihot_group.command("daily")
 async def _aihot_daily(self, event: AstrMessageEvent, date: str = ""):
-    try:
-        if date:
-            data = await self._client.get_daily(date)
-        else:
-            data = await self._client.get_latest_daily()
-    except ValueError as exc:
-        return event.plain_result(f"参数有误：{exc}")
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    return event.plain_result(format_daily(data))
+    return await self._run(
+        event,
+        lambda: (
+            self._client.get_daily(date) if date else self._client.get_latest_daily()
+        ),
+        format_daily,
+    )
 
 
 @_aihot_group.command("dailies")
 async def _aihot_dailies(self, event: AstrMessageEvent, limit: int = 10):
-    try:
-        data = await self._client.get_dailies(limit=limit)
-    except ValueError as exc:
-        return event.plain_result(f"参数有误：{exc}")
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    return event.plain_result(format_dailies_index(data))
+    return await self._run(
+        event,
+        lambda: self._client.get_dailies(limit=limit),
+        format_dailies_index,
+    )
 
 
 @_aihot_group.command("story")
 async def _aihot_story(self, event: AstrMessageEvent, public_id: GreedyStr):
-    try:
-        data = await self._client.get_story(public_id)
-    except ValueError as exc:
-        return event.plain_result(f"参数有误：{exc}")
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    return event.plain_result(format_story(data))
+    return await self._run(
+        event,
+        lambda: self._client.get_story(public_id),
+        format_story,
+    )
 
 
 @_aihot_group.command("search")
 async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
     show = self._int_config("items_show_limit", 10)
-    try:
-        data = await self._client.get_items(q=keyword, mode="all", limit=50)
-    except ValueError as exc:
-        return event.plain_result(f"参数有误：{exc}")
-    except AihotError as exc:
-        return event.plain_result(self._error_text(exc))
-    if not (data.get("items") or []):
-        return event.plain_result(f"AI HOT：没有找到与“{keyword}”相关的动态。")
-    text = format_items(data, show)
-    return event.plain_result(text.replace("📌 AI HOT 动态", f"🔎 搜索“{keyword}”"))
+
+    def _search_formatter(data: dict) -> str:
+        if not (data.get("items") or []):
+            return f"AI HOT：没有找到与“{keyword}”相关的动态。"
+        return format_items(data, show).replace("📌 AI HOT 动态", f"🔎 搜索“{keyword}”")
+
+    return await self._run(
+        event,
+        lambda: self._client.get_items(q=keyword, mode="all", limit=50),
+        _search_formatter,
+    )
 
 
 @_aihot_group.command("push")
@@ -341,9 +367,13 @@ class AihotPlugin(Star):
 
     # ----------------------------------------------------------------- push
 
-    def _schedule_push(self, target: str) -> bool:
+    def _scheduler(self):
+        """The AstrBot APScheduler instance, or None if unavailable."""
         cron = getattr(self.context, "cron_manager", None)
-        scheduler = getattr(cron, "scheduler", None)
+        return getattr(cron, "scheduler", None)
+
+    def _schedule_push(self, target: str) -> bool:
+        scheduler = self._scheduler()
         if scheduler is None:
             return False
         if not scheduler.running:
@@ -368,8 +398,7 @@ class AihotPlugin(Star):
         return True
 
     def _unschedule_push(self) -> None:
-        cron = getattr(self.context, "cron_manager", None)
-        scheduler = getattr(cron, "scheduler", None)
+        scheduler = self._scheduler()
         if scheduler is None:
             return
         if scheduler.get_job(PUSH_JOB_ID):
@@ -403,6 +432,16 @@ class AihotPlugin(Star):
         return MessageChain().message("\n\n".join(parts))
 
     # ----------------------------------------------------------------- utils
+
+    async def _run(self, event, coro_factory, formatter):
+        """Run an API call with the shared error handling for all commands."""
+        try:
+            data = await coro_factory()
+        except ValueError as exc:
+            return event.plain_result(f"参数有误：{exc}")
+        except AihotError as exc:
+            return event.plain_result(self._error_text(exc))
+        return event.plain_result(formatter(data))
 
     def _int_config(self, key: str, default: int) -> int:
         try:

@@ -37,7 +37,7 @@ cd AstrBot/data/plugins
 git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 ```
 
-依赖 `httpx` 已写入 `requirements.txt`，AstrBot 会自动安装。然后在 AstrBot WebUI 插件管理中启用。
+依赖 `httpx`、`apscheduler` 已写入 `requirements.txt`，AstrBot 会自动安装。然后在 AstrBot WebUI 插件管理中启用。
 
 ## 配置
 
@@ -66,7 +66,7 @@ git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 
 > 数据来源：AI HOT（<https://aihot.virxact.com/>）
 
-所有动态/日报回复末尾均附有此标注。原文版权归各来源所有；AI HOT 提供的摘要与翻译由 AI 生成，重要数字、政策和原话请以原文为准。
+所有动态/日报回复末尾均附有此标注。此外，按条款"镜像或对外发布须保留 AI HOT 署名和原文入口"，本插件每条动态/日报/事件均同时展示 **AI HOT 站内阅读链接**与**第三方原文链接**（`links.original`），并保留接口返回的 `attribution` 来源标识。原文版权归各来源所有；AI HOT 提供的摘要与翻译由 AI 生成，重要数字、政策和原话请以原文为准。
 
 ## 开发
 
