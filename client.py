@@ -38,6 +38,7 @@ DEFAULT_THROTTLE_SECONDS = 30
 MAX_5XX_RETRIES = 3
 MAX_429_RETRIES = 3
 REQUEST_TIMEOUT = 15.0
+MAX_CACHE_ENTRIES = 512
 
 VALID_MODES = ("selected", "all")
 VALID_WINDOWS = ("24h", "7d")
@@ -147,6 +148,11 @@ class AihotClient:
                 data = response.json()
                 self._cache[url] = {"data": data, "at": now}
                 self._etags[url] = response.headers.get("etag", "")
+                if len(self._cache) > MAX_CACHE_ENTRIES:
+                    # Capped, not LRU: dropping everything is simplest, and the
+                    # throttle makes a re-fetch of any entry cheap.
+                    self._cache.clear()
+                    self._etags.clear()
                 return data
 
             if response.status_code == httpx.codes.NOT_MODIFIED:
