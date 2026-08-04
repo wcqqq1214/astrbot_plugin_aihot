@@ -7,4 +7,4 @@ repo: https://github.com/wcqqq1214/astrbot_plugin_aihot # 插件的仓库地址
 support_platforms: # 声明支持的平台适配器（Optional）
   - aiocqhttp
   - qq_official
-astrbot_version: ">=4.16,<5" # 声明要求的 AstrBot 版本范围（Optional）
+astrbot_version: ">=4.26.7,<5" # 声明要求的 AstrBot 版本范围（Optional）
