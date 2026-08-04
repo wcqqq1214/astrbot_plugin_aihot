@@ -300,7 +300,7 @@ async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
     def _search_formatter(data: dict) -> str:
         if not (data.get("items") or []):
             return f"AI HOT：没有找到与“{keyword}”相关的动态。"
-        return format_items(data, show).replace("AI HOT 动态", f"搜索“{keyword}”")
+        return format_items(data, show).replace("AI HOT 动态", f"搜索“{keyword}”", 1)
 
     return await self._run(
         event,
