@@ -93,7 +93,7 @@ def _parse_retry_after(response: httpx.Response, default: float = 5.0) -> float:
     if not raw:
         return default
     try:
-        return float(raw)
+        return min(max(float(raw), 1.0), 60.0)
     except ValueError:
         return default
 
