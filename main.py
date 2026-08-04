@@ -84,9 +84,13 @@ def _append_links(
 def _append_daily_item(lines: list[str], item: dict) -> None:
     """Render one daily report item/flash with its original entry link."""
     title = item.get("title") or "（无标题）"
+    lines.append(f"- {title}")
+    meta = []
     source = _source_name(item)
-    suffix = f"（{source}）" if source else ""
-    lines.append(f"· {title}{suffix}")
+    if source:
+        meta.append(f"来源：{source}")
+    if meta:
+        lines.append("   - " + "｜".join(meta))
     original = _link(item, "original")
     if original:
         lines.append(f"   - 原文: {original}")
@@ -164,14 +168,17 @@ def format_daily(data: dict) -> str:
             lines.append(paragraph)
     sections = report.get("sections") or []
     for section in sections[:3]:
+        lines.append("")
         lines.append(f"【{section.get('label') or '要闻'}】")
         for item in (section.get("items") or [])[:5]:
             _append_daily_item(lines, item)
     flashes = report.get("flashes") or []
     if flashes:
+        lines.append("")
         lines.append("【快讯】")
         for flash in flashes[:5]:
             _append_daily_item(lines, flash)
+    lines.append("")
     _append_links(lines, report, indent="", primary_label="日报")
     lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
