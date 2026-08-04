@@ -1,0 +1,29 @@
+{
+  "items_show_limit": {
+    "description": "单条回复中最多展示的动态条数",
+    "type": "int",
+    "default": 10,
+    "hint": "单条回复中最多展示的动态条数"
+  },
+  "push_enable": {
+    "description": "启用每日定时推送（也可在聊天中使用 /aihot push on 开启）",
+    "type": "bool",
+    "default": false
+  },
+  "push_time": {
+    "description": "每日推送时间（HH:MM，Asia/Shanghai）",
+    "type": "string",
+    "default": "08:00",
+    "hint": "AI HOT 日报每天 08:00（北京时间）发布"
+  },
+  "push_timezone": {
+    "description": "推送时区（IANA 名称）",
+    "type": "string",
+    "default": "Asia/Shanghai"
+  },
+  "push_include_hot": {
+    "description": "每日推送同时附带当前热点榜",
+    "type": "bool",
+    "default": true
+  }
+}
