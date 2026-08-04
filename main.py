@@ -37,12 +37,12 @@ CATEGORY_LABELS = {
 _STATUS_LABELS = {"active": "进行中", "settled": "已完结"}
 
 
-def _clip(text: str | None, limit: int) -> str:
-    """Collapse whitespace and truncate ``text`` to ``limit`` characters."""
+def _clip(text: str | None, limit: int | None = None) -> str:
+    """Collapse whitespace in ``text``; truncate to ``limit`` only if given."""
     if not text:
         return ""
     flat = " ".join(str(text).split())
-    if len(flat) <= limit:
+    if limit is None or len(flat) <= limit:
         return flat
     return flat[:limit].rstrip() + "…"
 
@@ -106,7 +106,7 @@ def format_items(data: dict, show: int) -> str:
         # regardless of the source language.
         title = item.get("title") or "（无标题）"
         lines.append(f"{i}. {title}")
-        summary = _clip(item.get("summary"), 80)
+        summary = _clip(item.get("summary"))
         if summary:
             lines.append(f"   {summary}")
         meta = []
@@ -159,7 +159,7 @@ def format_daily(data: dict) -> str:
         title = (lead.get("title") or "").strip()
         if title:
             lines.append(title)
-        paragraph = _clip(lead.get("leadParagraph"), 200)
+        paragraph = _clip(lead.get("leadParagraph"))
         if paragraph:
             lines.append(paragraph)
     sections = report.get("sections") or []
@@ -185,7 +185,7 @@ def format_dailies_index(data: dict) -> str:
     lines = ["AI HOT 日报索引"]
     for entry in entries[:20]:
         date = entry.get("date", "")
-        lead = _clip(entry.get("leadTitle"), 60)
+        lead = _clip(entry.get("leadTitle"))
         lines.append(f"· {date} {lead}".rstrip())
     lines.append("\n" + ATTR_TEXT)
     return "\n".join(lines)
@@ -199,10 +199,10 @@ def format_story(data: dict) -> str:
     title = story.get("title") or "（无标题）"
     status = _STATUS_LABELS.get(story.get("status", ""), story.get("status", ""))
     lines = [f"{title}（{status}）".rstrip()]
-    digest = _clip(story.get("digest"), 300)
+    digest = _clip(story.get("digest"))
     if digest:
         lines.append(digest)
-    latest = _clip(story.get("latest"), 150)
+    latest = _clip(story.get("latest"))
     if latest:
         lines.append(f"最新进展：{latest}")
     lines.append(
