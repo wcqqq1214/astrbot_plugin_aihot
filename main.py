@@ -316,12 +316,12 @@ async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
         )
     if action == "on":
         target = event.unified_msg_origin
+        if not self._schedule_push(target):
+            return event.plain_result("开启推送失败：无法访问定时调度器。")
         self._push_target = target
         await self.put_kv_data(PUSH_TARGET_KV, target)
         self.config["push_enable"] = True
         await self.config.save_config_async()
-        if not self._schedule_push(target):
-            return event.plain_result("开启推送失败：无法访问定时调度器。")
         hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
         tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
         return event.plain_result(
