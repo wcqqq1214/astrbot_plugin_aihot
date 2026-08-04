@@ -206,7 +206,7 @@ def format_story(data: dict) -> str:
         return "AI HOT：未找到该事件。"
     title = story.get("title") or "（无标题）"
     status = _STATUS_LABELS.get(story.get("status", ""), story.get("status", ""))
-    lines = [f"{title}（{status}）".rstrip()]
+    lines = [f"{title}（{status}）" if status else title]
     digest = _clip(story.get("digest"))
     if digest:
         lines.append(digest)
