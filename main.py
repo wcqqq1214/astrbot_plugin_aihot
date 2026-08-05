@@ -279,7 +279,6 @@ def _help_text() -> str:
         "· /aihot dailies 日报索引\n"
         "· /aihot story <publicId> 事件详情\n"
         "· /aihot search <关键词> 关键词搜索\n"
-        "· /aihot push on|off 每日推送\n"
         "\n" + ATTR_TEXT
     )
 

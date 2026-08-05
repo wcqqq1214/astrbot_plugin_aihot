@@ -1,6 +1,6 @@
 name: astrbot_plugin_aihot # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
 display_name: AI HOT # 用于展示的名字，方便人类阅读（需要版本 >= v4.5.0）
-short_desc: 聚合 AI HOT 的 AI 行业动态、热点榜与日报，支持搜索与每日推送 # 紧凑 UI 使用的短描述（Optional）
+short_desc: 聚合 AI HOT 的 AI 行业动态、热点榜与日报，支持搜索 # 紧凑 UI 使用的短描述（Optional）
 desc: |
   聚合 AI HOT（aihot.virxact.com）的 AI 行业动态、热点榜与日报，供 AstrBot 使用。
 
@@ -11,7 +11,7 @@ desc: |
   - 热点榜：当前 AI 圈热点 TOP 10
   - AI 日报：最新一期或按天获取，含日期索引
   - 事件详情：热点事件时间线与 AI 综述
-  - 每日推送：定时将日报 + 热点榜推送到指定会话
+  - 每日推送（待测试）：定时将日报 + 热点榜推送到指定会话
 version: 0.2.0 # 插件版本号。格式：1.1.1 或者 1.1
 author: wcqqq1214 # 作者
 repo: https://github.com/wcqqq1214/astrbot_plugin_aihot # 插件的仓库地址
@@ -21,6 +21,5 @@ tags: # 标签列表，用于插件市场分类和搜索（Optional）
   - 日报
   - 聚合
 support_platforms: # 声明支持的平台适配器（Optional）
-  - aiocqhttp
   - qq_official
 astrbot_version: ">=4.26.7,<5" # 声明要求的 AstrBot 版本范围（Optional）
