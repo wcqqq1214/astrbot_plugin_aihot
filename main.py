@@ -377,7 +377,7 @@ async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
     "astrbot_plugin_aihot",
     "wcqqq1214",
     "聚合 AI HOT 的 AI 行业动态、热点榜与日报",
-    "1.0.0",
+    "1.0.1",
 )
 class AihotPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
