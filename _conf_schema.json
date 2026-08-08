@@ -6,7 +6,7 @@
     "hint": "单条回复中最多展示的动态条数"
   },
   "push_enable": {
-    "description": "启用每日定时推送（也可在聊天中使用 /aihot push on 开启）",
+    "description": "启用实验性每日定时推送；必须先在目标会话执行 /aihot push on",
     "type": "bool",
     "default": false
   },
@@ -22,7 +22,7 @@
     "default": "Asia/Shanghai"
   },
   "push_include_hot": {
-    "description": "每日推送同时附带当前热点榜",
+    "description": "实验性每日推送同时附带当前热点榜",
     "type": "bool",
     "default": true
   }

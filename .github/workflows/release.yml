@@ -6,120 +6,143 @@ on:
     branches:
       - main
     paths:
-      - 'metadata.yaml'
-
-permissions:
-  contents: write
+      - "metadata.yaml"
 
 jobs:
   check-version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       version_changed: ${{ steps.check.outputs.changed }}
       new_version: ${{ steps.check.outputs.version }}
       old_version: ${{ steps.check.outputs.old_version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 2
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Check version change
+      - name: Check strict SemVer and synchronized metadata
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
-          VERSION="$(sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p' metadata.yaml)"
-          if [ -z "$VERSION" ]; then
-            echo "::error::could not parse version from metadata.yaml"
+          set -euo pipefail
+
+          read_version() {
+            sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p' metadata.yaml | head -n 1
+          }
+
+          VERSION="$(read_version)"
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::metadata.yaml must contain strict SemVer X.Y.Z"
             exit 1
           fi
-          echo "Current version: $VERSION"
 
-          # Manual dispatch always releases the current version.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "old_version=none" >> "$GITHUB_OUTPUT"
-            exit 0
+          PYPROJECT_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' pyproject.toml | head -n 1)"
+          LOCK_VERSION="$(awk '
+            $0 == "name = \"astrbot-plugin-aihot\"" { in_plugin = 1; next }
+            in_plugin && /^version = / { gsub(/[\"]/, "", $3); print $3; exit }
+            in_plugin && /^\[\[package\]\]/ { exit }
+          ' uv.lock)"
+          if [[ "$PYPROJECT_VERSION" != "$VERSION" || "$LOCK_VERSION" != "$VERSION" ]]; then
+            echo "::error::metadata.yaml, pyproject.toml and uv.lock versions differ"
+            exit 1
           fi
 
-          # Compare against the version in the previous commit.
-          PREVIOUS_VERSION="$(git show HEAD~1:metadata.yaml 2>/dev/null | sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p')"
-          PREVIOUS_VERSION="${PREVIOUS_VERSION:-none}"
-          echo "Previous version: $PREVIOUS_VERSION"
-
-          if [ "$VERSION" != "$PREVIOUS_VERSION" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "old_version=$PREVIOUS_VERSION" >> "$GITHUB_OUTPUT"
-            echo "Version changed from $PREVIOUS_VERSION to $VERSION"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No version change detected"
+          OLD_VERSION="none"
+          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
+            if [[ "$EVENT_BEFORE" =~ ^0+$ ]]; then
+              OLD_VERSION="0.0.0"
+            else
+              OLD_VERSION="$(git show "$EVENT_BEFORE:metadata.yaml" 2>/dev/null | sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p' | head -n 1)"
+              OLD_VERSION="${OLD_VERSION:-0.0.0}"
+            fi
+            if [[ ! "$OLD_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::previous metadata version is not strict SemVer"
+              exit 1
+            fi
+            if [[ "$VERSION" == "$OLD_VERSION" ]]; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+              echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            IFS=. read -r old_major old_minor old_patch <<< "$OLD_VERSION"
+            IFS=. read -r new_major new_minor new_patch <<< "$VERSION"
+            if (( new_major < old_major ||
+                  (new_major == old_major && new_minor < old_minor) ||
+                  (new_major == old_major && new_minor == old_minor && new_patch <= old_patch) )); then
+              echo "::error::new version $VERSION must be greater than $OLD_VERSION"
+              exit 1
+            fi
           fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
 
   create-release:
     needs: check-version
     if: needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      NEW_VERSION: ${{ needs.check-version.outputs.new_version }}
+      OLD_VERSION: ${{ needs.check-version.outputs.old_version }}
+      REPOSITORY: ${{ github.repository }}
+      COMMIT_SHA: ${{ github.sha }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed for existing tag or release
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --refs origin "refs/tags/${NEW_VERSION}" >/dev/null 2>&1; then
+            echo "::error::tag ${NEW_VERSION} already exists; refusing to overwrite it"
+            exit 1
+          fi
+          if gh release view "$NEW_VERSION" >/dev/null 2>&1; then
+            echo "::error::release ${NEW_VERSION} already exists; refusing to overwrite it"
+            exit 1
+          fi
 
       - name: Package plugin
         run: |
-          VERSION="${{ needs.check-version.outputs.new_version }}"
+          set -euo pipefail
           mkdir -p dist
-          git ls-files | grep -v '^\.github/' | zip -@ "dist/astrbot_plugin_aihot-${VERSION}.zip"
+          git ls-files ':!.github/**' ':!tests/**' | zip -@ "dist/astrbot_plugin_aihot-${NEW_VERSION}.zip"
 
       - name: Generate release notes
-        id: notes
         run: |
-          NEW_VERSION="${{ needs.check-version.outputs.new_version }}"
-          OLD_VERSION="${{ needs.check-version.outputs.old_version }}"
-          REPO="${{ github.repository }}"
+          set -euo pipefail
+          {
+            echo "## AI HOT ${NEW_VERSION}"
+            echo
+            if [[ "$OLD_VERSION" != "none" ]] && git rev-parse "$OLD_VERSION" >/dev/null 2>&1; then
+              git log --pretty=format:'- %s ([%h](https://github.com/'"$REPOSITORY"'/commit/%H))' "$OLD_VERSION..$COMMIT_SHA" --no-merges
+              echo
+              echo
+              echo "**Full Changelog**: https://github.com/${REPOSITORY}/compare/${OLD_VERSION}...${NEW_VERSION}"
+            else
+              echo "Initial release"
+            fi
+          } > release_notes.md
 
-          echo "## ${NEW_VERSION}" > release_notes.md
-          echo "" >> release_notes.md
-
-          if [ "$OLD_VERSION" != "none" ] && git rev-parse "$OLD_VERSION" >/dev/null 2>&1; then
-            git log --pretty=format:"%s|%h|%H" "$OLD_VERSION..HEAD" --no-merges > commits.txt
-
-            print_category() {
-              title="$1"; pattern="$2"
-              hits="$(grep -iE "$pattern" commits.txt || true)"
-              if [ -n "$hits" ]; then
-                echo "### $title" >> release_notes.md
-                printf '%s\n' "$hits" | while IFS='|' read -r msg hash full; do
-                  echo "- ${msg} ([${hash}](https://github.com/${REPO}/commit/${full}))" >> release_notes.md
-                done
-                echo "" >> release_notes.md
-              fi
-            }
-
-            print_category "Features" "^(feat|feature)(\([^)]*\))?:"
-            print_category "Fixes" "^fix(\([^)]*\))?:"
-            print_category "Documentation" "^docs(\([^)]*\))?:"
-            print_category "Chores" "^(chore|style|refactor|perf|test|ci|build)(\([^)]*\))?:"
-
-            rm -f commits.txt
-            echo "**Full Changelog**: https://github.com/${REPO}/compare/${OLD_VERSION}...${NEW_VERSION}" >> release_notes.md
-          else
-            echo "### Initial release" >> release_notes.md
-            echo "" >> release_notes.md
-            git log --pretty=format:"- %s ([%h](https://github.com/${REPO}/commit/%H))" -10 --no-merges >> release_notes.md
-          fi
-
-      - name: Create release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.check-version.outputs.new_version }}
-          name: AI HOT ${{ needs.check-version.outputs.new_version }}
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
-          generate_release_notes: false
-          files: dist/*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create immutable release
+        run: |
+          set -euo pipefail
+          gh release create "$NEW_VERSION" \
+            "dist/astrbot_plugin_aihot-${NEW_VERSION}.zip" \
+            --target "$COMMIT_SHA" \
+            --title "AI HOT ${NEW_VERSION}" \
+            --notes-file release_notes.md

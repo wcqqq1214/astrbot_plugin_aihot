@@ -1,273 +1,52 @@
 """AI HOT AstrBot plugin.
 
-Aggregates AI industry news, the hot-topic board and daily reports from
-AI HOT (https://aihot.virxact.com/) through its anonymous, read-only REST
-API v1. See https://aihot.virxact.com/agent for the integration contract.
-
-Public use of the data requires a discoverable attribution statement:
-"数据来源：AI HOT" with a link to the site (see the access terms).
+The plugin uses AI HOT's anonymous, read-only REST API v1 and keeps all
+AstrBot handler registration on :class:`AihotPlugin`.  Rendering lives in the
+AstrBot-independent :mod:`formatter` module so it can be tested without a
+running AstrBot process.
 """
 
 from __future__ import annotations
 
+import functools
+import inspect
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.cron import CronTrigger
-from astrbot.api import AstrBotConfig, logger
+from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.event.filter import CustomFilter, PermissionType
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star
 from astrbot.core.star.filter.command import GreedyStr
 
 from .client import AihotAPIError, AihotClient, AihotError
+from .formatter import (
+    ATTR_TEXT,
+    format_dailies_index,
+    format_daily,
+    format_hot_topics,
+    format_items,
+    format_story,
+)
 
-ATTR_TEXT = "数据来源：AI HOT（https://aihot.virxact.com/）"
 PUSH_JOB_ID = "aihot_daily_push"
 PUSH_TARGET_KV = "aihot_push_target"
 DEFAULT_PUSH_TIME = "08:00"
 DEFAULT_PUSH_TZ = "Asia/Shanghai"
 
-CATEGORY_LABELS = {
-    "ai-models": "模型",
-    "ai-products": "产品",
-    "industry": "产业",
-    "paper": "论文",
-    "tip": "技巧",
-}
-
-_STATUS_LABELS = {"active": "进行中", "settled": "已完结"}
-
-
-def _clip(text: str | None, limit: int | None = None) -> str:
-    """Collapse whitespace in ``text``; truncate to ``limit`` only if given."""
-    if not text:
-        return ""
-    flat = " ".join(str(text).split())
-    if limit is None or len(flat) <= limit:
-        return flat
-    return flat[:limit].rstrip() + "…"
-
-
-def _source_name(obj: dict | None) -> str:
-    return ((obj or {}).get("source") or {}).get("name", "") or ""
-
-
-def _link(obj: dict | None, *keys: str) -> str | None:
-    links = (obj or {}).get("links") or {}
-    for key in keys:
-        if links.get(key):
-            return str(links[key])
-    return None
-
-
-def _append_links(
-    lines: list[str],
-    obj: dict | None,
-    *,
-    indent: str = "   ",
-    primary_keys: tuple[str, ...] = ("aihot",),
-    primary_label: str = "详情",
-) -> None:
-    """Append the AI HOT in-site link and the third-party original link.
-
-    The AI HOT terms require redistribution to retain the original entry
-    link, and ask users to verify facts against the original source, so
-    both are rendered whenever present.
-    """
-    primary = _link(obj, *primary_keys)
-    original = _link(obj, "original")
-    if primary:
-        lines.append(f"{indent}- {primary_label}: {primary}")
-    if original and original != primary:
-        lines.append(f"{indent}- 原文: {original}")
-
-
-def _append_daily_item(lines: list[str], item: dict) -> None:
-    """Render one daily report item/flash with its original entry link."""
-    title = item.get("title") or "（无标题）"
-    lines.append(f"- {title}")
-    meta = []
-    source = _source_name(item)
-    if source:
-        meta.append(f"来源：{source}")
-    if meta:
-        lines.append("   - " + "｜".join(meta))
-    original = _link(item, "original")
-    if original:
-        lines.append(f"   - 原文: {original}")
-
-
-# ----------------------------------------------------------------- formatting
-
-
-def format_items(data: dict, show: int) -> str:
-    """Render a v1 ``items`` response as plain text."""
-    items = data.get("items") or []
-    if not items:
-        return "AI HOT：当前没有符合条件的动态。"
-    lines = ["AI HOT 动态"]
-    for i, item in enumerate(items[:show], 1):
-        # Use AI HOT's curated Chinese title so the list reads uniformly,
-        # regardless of the source language.
-        title = item.get("title") or "（无标题）"
-        lines.append(f"{i}. {title}")
-        summary = _clip(item.get("summary"))
-        if summary:
-            lines.append(f"   {summary}")
-        meta = []
-        source = _source_name(item)
-        if source:
-            meta.append(f"来源：{source}")
-        category = item.get("category")
-        if category:
-            meta.append(CATEGORY_LABELS.get(category, category))
-        if meta:
-            lines.append("   - " + "｜".join(meta))
-        _append_links(lines, item, primary_label="详情")
-    if len(items) > show:
-        lines.append(f"…（已返回 {len(items)} 条，仅显示前 {show} 条）")
-    lines.append("\n" + ATTR_TEXT)
-    return "\n".join(lines)
-
-
-def format_hot_topics(data: dict) -> str:
-    """Render a v1 ``hot-topics`` response as plain text."""
-    items = data.get("items") or []
-    if not items:
-        return "AI HOT：当前没有热点话题。"
-    lines = [f"AI HOT 热点榜（{data.get('count') or len(items)}）"]
-    for topic in items[:10]:
-        title = topic.get("title") or "（无标题）"
-        lines.append(f"{topic.get('rank', '?')}. {title}")
-        meta = []
-        source = _source_name(topic)
-        if source:
-            meta.append(f"来源：{source}")
-        meta.append(f"报道 {topic.get('sourceCount', 0)} 篇")
-        meta.append(f"信号 {topic.get('signalCount', 0)}")
-        lines.append("   - " + "｜".join(meta))
-        _append_links(
-            lines, topic, primary_keys=("story", "aihot"), primary_label="事件"
-        )
-    lines.append("\n" + ATTR_TEXT)
-    return "\n".join(lines)
-
-
-def format_daily(data: dict) -> str:
-    """Render a v1 ``dailies/{date|latest}`` response as plain text."""
-    report = data.get("report") or {}
-    if not report:
-        return "AI HOT：暂无可用的日报。"
-    lines = [f"AI HOT 日报 {report.get('date', '')}".rstrip()]
-    lead = report.get("lead")
-    if lead:
-        title = (lead.get("title") or "").strip()
-        if title:
-            lines.append(title)
-        paragraph = _clip(lead.get("leadParagraph"))
-        if paragraph:
-            lines.append(paragraph)
-    sections = report.get("sections") or []
-    for section in sections[:3]:
-        lines.append("")
-        lines.append(f"【{section.get('label') or '要闻'}】")
-        for item in (section.get("items") or [])[:5]:
-            _append_daily_item(lines, item)
-    flashes = report.get("flashes") or []
-    if flashes:
-        lines.append("")
-        lines.append("【快讯】")
-        for flash in flashes[:5]:
-            _append_daily_item(lines, flash)
-    lines.append("")
-    _append_links(lines, report, indent="", primary_label="日报")
-    lines.append("\n" + ATTR_TEXT)
-    return "\n".join(lines)
-
-
-def format_dailies_index(data: dict) -> str:
-    """Render a v1 ``dailies`` index response as plain text."""
-    entries = data.get("items") or []
-    if not entries:
-        return "AI HOT：暂无日报索引。"
-    lines = ["AI HOT 日报索引"]
-    for entry in entries[:20]:
-        date = entry.get("date", "")
-        lead = _clip(entry.get("leadTitle"))
-        lines.append(f"· {date} {lead}".rstrip())
-    lines.append("\n" + ATTR_TEXT)
-    return "\n".join(lines)
-
-
-def format_story(data: dict) -> str:
-    """Render a v1 ``stories/{publicId}`` response as plain text."""
-    story = data.get("story") or {}
-    if not story:
-        return "AI HOT：未找到该事件。"
-    title = story.get("title") or "（无标题）"
-    status = _STATUS_LABELS.get(story.get("status", ""), story.get("status", ""))
-    lines = [f"{title}（{status}）" if status else title]
-    digest = _clip(story.get("digest"))
-    if digest:
-        lines.append(digest)
-    latest = _clip(story.get("latest"))
-    if latest:
-        lines.append(f"最新进展：{latest}")
-    lines.append(
-        f"· 报道 {story.get('reportCount', 0)} 篇｜来源 {story.get('sourceCount', 0)} 个"
-    )
-    _append_links(lines, story, indent="", primary_label="详情")
-    for report_item in reversed(story.get("reports") or []):
-        original = _link(report_item, "original")
-        if original:
-            lines.append(f"- 原文: {original}")
-            break
-    lines.append("\n" + ATTR_TEXT)
-    return "\n".join(lines)
-
-
-# -------------------------------------------------------------- command group
-
 
 class _NotBareAihotFilter(CustomFilter):
-    """Gate the ``aihot`` command group off for the bare invocation.
-
-    AstrBot raises "参数不足" when a command group is called with no
-    subcommand. This filter lets the group handle only subcommands so the
-    bare ``/aihot`` is routed to ``_aihot_bare`` instead.
-    """
+    """Route only subcommands to the command group."""
 
     def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
         return event.message_str.strip() != "aihot"
 
 
 class _BareAihotFilter(CustomFilter):
-    """Match only the bare ``aihot`` invocation, never ``aihot <subcommand>``."""
+    """Match only a bare ``aihot`` invocation."""
 
     def filter(self, event: AstrMessageEvent, cfg: AstrBotConfig) -> bool:
         return event.is_at_or_wake_command and event.message_str.strip() == "aihot"
-
-
-@filter.command_group("aihot")
-def _aihot_group():
-    """AI HOT 聚合指令组。"""
-
-
-# Attach the bare-invocation gate to the group. A group called with no
-# subcommand otherwise replies "参数不足" with the command tree.
-_aihot_group.parent_group.add_custom_filter(_NotBareAihotFilter())
-
-
-@filter.custom_filter(_BareAihotFilter)
-async def _aihot_bare(self, event: AstrMessageEvent):
-    # A bare ``aihot`` (exact match) is routed here instead of the command
-    # group, which would otherwise reply "参数不足" with the command tree.
-    return await _aihot_help(self, event)
-
-
-@_aihot_group.command("help")
-async def _aihot_help(self, event: AstrMessageEvent):
-    return event.plain_result(_help_text())
 
 
 def _help_text() -> str:
@@ -276,189 +55,267 @@ def _help_text() -> str:
         "· /aihot items [数量] 最新动态\n"
         "· /aihot hot 热点榜\n"
         "· /aihot daily [YYYY-MM-DD] 日报\n"
-        "· /aihot dailies 日报索引\n"
+        "· /aihot dailies [数量] 日报索引\n"
         "· /aihot story <publicId> 事件详情\n"
         "· /aihot search <关键词> 关键词搜索\n"
+        "· /aihot push on 开启实验性每日推送（管理员）\n"
+        "· /aihot push off 关闭实验性每日推送（管理员）\n"
+        "\n推送首次必须在目标会话执行 push on；当前仅保存一个目标，后一次开启会覆盖前一次。"
         "\n" + ATTR_TEXT
     )
 
 
-@_aihot_group.command("items")
-async def _aihot_items(self, event: AstrMessageEvent, limit: int = 10):
-    show = self._int_config("items_show_limit", 10)
-    return await self._run(
-        event,
-        lambda: self._client.get_items(limit=limit),
-        lambda data: format_items(data, min(limit, show)),
-    )
-
-
-@_aihot_group.command("hot")
-async def _aihot_hot(self, event: AstrMessageEvent):
-    return await self._run(event, self._client.get_hot_topics, format_hot_topics)
-
-
-@_aihot_group.command("daily")
-async def _aihot_daily(self, event: AstrMessageEvent, date: str = ""):
-    return await self._run(
-        event,
-        lambda: (
-            self._client.get_daily(date) if date else self._client.get_latest_daily()
-        ),
-        format_daily,
-    )
-
-
-@_aihot_group.command("dailies")
-async def _aihot_dailies(self, event: AstrMessageEvent, limit: int = 10):
-    return await self._run(
-        event,
-        lambda: self._client.get_dailies(limit=limit),
-        format_dailies_index,
-    )
-
-
-@_aihot_group.command("story")
-async def _aihot_story(self, event: AstrMessageEvent, public_id: GreedyStr):
-    return await self._run(
-        event,
-        lambda: self._client.get_story(public_id),
-        format_story,
-    )
-
-
-@_aihot_group.command("search")
-async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
-    show = self._int_config("items_show_limit", 10)
-
-    def _search_formatter(data: dict) -> str:
-        if not (data.get("items") or []):
-            return f"AI HOT：没有找到与“{keyword}”相关的动态。"
-        return format_items(data, show).replace("AI HOT 动态", f"搜索“{keyword}”", 1)
-
-    return await self._run(
-        event,
-        lambda: self._client.get_items(q=keyword, mode="all", limit=50),
-        _search_formatter,
-    )
-
-
-@_aihot_group.command("push")
-@filter.permission_type(PermissionType.ADMIN)
-async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
-    if action not in ("on", "off"):
-        return event.plain_result(
-            "用法：/aihot push on 开启每日推送；/aihot push off 关闭。"
-        )
-    if action == "on":
-        target = event.unified_msg_origin
-        if not self._schedule_push(target):
-            return event.plain_result("开启推送失败：无法访问定时调度器。")
-        self._push_target = target
-        await self.put_kv_data(PUSH_TARGET_KV, target)
-        self.config["push_enable"] = True
-        await self.config.save_config_async()
-        hh, mm, tz = self._push_schedule()
-        return event.plain_result(
-            f"已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
-        )
-    self._unschedule_push()
-    self._push_target = None
-    await self.delete_kv_data(PUSH_TARGET_KV)
-    self.config["push_enable"] = False
-    await self.config.save_config_async()
-    return event.plain_result("已关闭 AI HOT 每日推送。")
-
-
-# --------------------------------------------------------------------- plugin
-
-
-@register(
-    "astrbot_plugin_aihot",
-    "wcqqq1214",
-    "聚合 AI HOT 的 AI 行业动态、热点榜与日报",
-    "1.0.1",
-)
 class AihotPlugin(Star):
+    """AI HOT command handlers and lifecycle."""
+
+    # Register handlers on the plugin class.  AstrBot binds these functions to
+    # the live instance when it activates the Star.
+    @filter.command_group("aihot")
+    def _aihot_group(self):
+        """AI HOT 聚合指令组。"""
+
+    _aihot_group.parent_group.add_custom_filter(_NotBareAihotFilter())
+
+    @filter.custom_filter(_BareAihotFilter)
+    async def _aihot_bare(self, event: AstrMessageEvent):
+        return await self._aihot_help(event)
+
+    @_aihot_group.command("help")
+    async def _aihot_help(self, event: AstrMessageEvent):
+        return event.plain_result(_help_text())
+
+    @_aihot_group.command("items")
+    async def _aihot_items(self, event: AstrMessageEvent, limit: int = 10):
+        show = self._int_config("items_show_limit", 10)
+        return await self._run(
+            event,
+            lambda: self._client.get_items(limit=limit),
+            lambda data: format_items(data, min(limit, show)),
+        )
+
+    @_aihot_group.command("hot")
+    async def _aihot_hot(self, event: AstrMessageEvent):
+        return await self._run(event, self._client.get_hot_topics, format_hot_topics)
+
+    @_aihot_group.command("daily")
+    async def _aihot_daily(self, event: AstrMessageEvent, date: str = ""):
+        return await self._run(
+            event,
+            lambda: (
+                self._client.get_daily(date)
+                if date
+                else self._client.get_latest_daily()
+            ),
+            format_daily,
+        )
+
+    @_aihot_group.command("dailies")
+    async def _aihot_dailies(self, event: AstrMessageEvent, limit: int = 10):
+        return await self._run(
+            event,
+            lambda: self._client.get_dailies(limit=limit),
+            format_dailies_index,
+        )
+
+    @_aihot_group.command("story")
+    async def _aihot_story(self, event: AstrMessageEvent, public_id: GreedyStr):
+        return await self._run(
+            event,
+            lambda: self._client.get_story(public_id),
+            format_story,
+        )
+
+    @_aihot_group.command("search")
+    async def _aihot_search(self, event: AstrMessageEvent, keyword: GreedyStr):
+        show = self._int_config("items_show_limit", 10)
+
+        def _search_formatter(data: dict) -> str:
+            if not (data.get("items") or []):
+                return f"AI HOT：没有找到与“{keyword}”相关的动态。"
+            return format_items(data, show).replace(
+                "AI HOT 动态", f"搜索“{keyword}”", 1
+            )
+
+        return await self._run(
+            event,
+            lambda: self._client.get_items(q=keyword, mode="all", limit=50),
+            _search_formatter,
+        )
+
+    @_aihot_group.command("push")
+    @filter.permission_type(PermissionType.ADMIN)
+    async def _aihot_push(self, event: AstrMessageEvent, action: str = ""):
+        if action not in ("on", "off"):
+            return event.plain_result(
+                "用法：/aihot push on 开启实验性每日推送；/aihot push off 关闭。"
+            )
+        if action == "on":
+            target = str(getattr(event, "unified_msg_origin", "") or "").strip()
+            if not target:
+                return event.plain_result("开启推送失败：当前会话没有可保存的目标。")
+            if not await self._schedule_push(target):
+                return event.plain_result("开启推送失败：无法访问定时调度器。")
+            self._push_target = target
+            await self.put_kv_data(PUSH_TARGET_KV, target)
+            self.config["push_enable"] = True
+            await self._save_config()
+            hh, mm, tz = self._push_schedule()
+            return event.plain_result(
+                f"已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
+            )
+        await self._unschedule_push()
+        self._push_target = None
+        await self.delete_kv_data(PUSH_TARGET_KV)
+        self.config["push_enable"] = False
+        await self._save_config()
+        return event.plain_result("已关闭 AI HOT 每日推送。")
+
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context)
         self.config = config if config is not None else AstrBotConfig()
-        self._client = AihotClient()
+        self._client = AihotClient(logger=self.logger)
         self._push_target: str | None = None
+        self._push_job_id: str | None = None
 
     async def initialize(self) -> None:
-        """(Re)create the HTTP client and re-arm the scheduled push, if enabled."""
+        """Recreate the HTTP client and restore a valid scheduled push."""
+
         await self._client.close()
-        self._client = AihotClient()
+        self._client = AihotClient(logger=self.logger)
         self._push_target = await self.get_kv_data(PUSH_TARGET_KV, None)
-        if self.config.get("push_enable", False) and self._push_target:
-            self._schedule_push(self._push_target)
+        if not self.config.get("push_enable", False):
+            return
+        if not self._push_target:
+            self.logger.warning(
+                "AI HOT push_enable is true but no target session is stored; disabling push."
+            )
+            self.config["push_enable"] = False
+            await self._save_config()
+            return
+        if not await self._schedule_push(self._push_target):
+            self.logger.warning("AI HOT push could not be restored; disabling push.")
+            self.config["push_enable"] = False
+            await self._save_config()
 
     async def terminate(self) -> None:
-        self._unschedule_push()
+        await self._unschedule_push()
         await self._client.close()
 
     # ----------------------------------------------------------------- push
 
     def _scheduler(self):
-        """The AstrBot APScheduler instance, or None if unavailable.
+        """Return the fallback APScheduler instance, if exposed by AstrBot."""
 
-        Never call ``start()`` on it: CronJobManager owns its lifecycle, and an early
-        start makes CronJobManager.start() raise SchedulerAlreadyRunningError on boot,
-        which kills AstrBot's own cron sync. Jobs added to a stopped scheduler fire
-        once AstrBot starts it during startup.
-        """
         cron = getattr(self.context, "cron_manager", None)
         return getattr(cron, "scheduler", None)
 
-    def _schedule_push(self, target: str) -> bool:
+    async def _schedule_push(self, target: str) -> bool:
+        """Schedule one target through CronJobManager's public API when possible."""
+
+        if not target:
+            return False
+        hh, mm, tz = self._push_schedule()
+        cron = getattr(self.context, "cron_manager", None)
+        add_basic_job = getattr(cron, "add_basic_job", None)
+        old_job_id = self._push_job_id
+        if callable(add_basic_job):
+            try:
+                job_result = add_basic_job(
+                    name=PUSH_JOB_ID,
+                    cron_expression=f"{mm} {hh} * * *",
+                    handler=functools.partial(self._run_push, target),
+                    description="AI HOT experimental daily push",
+                    timezone=tz,
+                    persistent=False,
+                )
+                job = (
+                    await job_result if inspect.isawaitable(job_result) else job_result
+                )
+            except Exception as exc:  # noqa: BLE001 - command reports failure
+                self.logger.error("AI HOT push scheduling failed: %s", exc)
+                return False
+            self._push_job_id = getattr(job, "job_id", None)
+            if old_job_id and old_job_id != self._push_job_id:
+                delete_job = getattr(cron, "delete_job", None)
+                if callable(delete_job):
+                    try:
+                        result = delete_job(old_job_id)
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as exc:  # noqa: BLE001
+                        self.logger.warning(
+                            "AI HOT old push job cleanup failed: %s", exc
+                        )
+            self.logger.info(
+                "AI HOT scheduled daily push to %s at %02d:%02d (%s).",
+                target,
+                hh,
+                mm,
+                tz,
+            )
+            return True
+
         scheduler = self._scheduler()
         if scheduler is None:
             return False
-        hh, mm, tz = self._push_schedule()
-        scheduler.add_job(
-            self._run_push,
-            trigger=CronTrigger(hour=hh, minute=mm, timezone=ZoneInfo(tz)),
-            args=[target],
-            id=PUSH_JOB_ID,
-            replace_existing=True,
-            misfire_grace_time=600,
-        )
-        logger.info(
+        try:
+            scheduler.add_job(
+                self._run_push,
+                trigger=CronTrigger(hour=hh, minute=mm, timezone=ZoneInfo(tz)),
+                args=[target],
+                id=PUSH_JOB_ID,
+                replace_existing=True,
+                misfire_grace_time=600,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("AI HOT fallback push scheduling failed: %s", exc)
+            return False
+        self._push_job_id = None
+        self.logger.info(
             "AI HOT scheduled daily push to %s at %02d:%02d (%s).", target, hh, mm, tz
         )
         return True
 
-    def _unschedule_push(self) -> None:
-        scheduler = self._scheduler()
-        if scheduler is None:
+    async def _unschedule_push(self) -> None:
+        cron = getattr(self.context, "cron_manager", None)
+        if self._push_job_id:
+            delete_job = getattr(cron, "delete_job", None)
+            if callable(delete_job):
+                try:
+                    result = delete_job(self._push_job_id)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.warning("AI HOT push cleanup failed: %s", exc)
+            self._push_job_id = None
             return
-        if scheduler.get_job(PUSH_JOB_ID):
+        scheduler = self._scheduler()
+        if scheduler is not None and scheduler.get_job(PUSH_JOB_ID):
             scheduler.remove_job(PUSH_JOB_ID)
 
     async def _run_push(self, target: str) -> None:
         chain = await self._build_push_message()
         if chain is None:
-            logger.warning("AI HOT push: nothing to send, skipped.")
+            self.logger.warning("AI HOT push: nothing to send, skipped.")
             return
         try:
             await self.context.send_message(target, chain)
-        except Exception as exc:  # noqa: BLE001 - never break the scheduler loop
-            logger.error("AI HOT push to %s failed: %s", target, exc)
+        except Exception as exc:  # noqa: BLE001 - never break scheduler loop
+            self.logger.error("AI HOT push to %s failed: %s", target, exc)
 
     async def _build_push_message(self) -> MessageChain | None:
-        parts = []
+        parts: list[str] = []
         try:
             daily = await self._client.get_latest_daily()
             parts.append(format_daily(daily))
         except AihotError as exc:
-            logger.warning("AI HOT push: latest daily unavailable: %s", exc)
+            self.logger.warning("AI HOT push: latest daily unavailable: %s", exc)
         if self.config.get("push_include_hot", True):
             try:
                 hot = await self._client.get_hot_topics()
                 parts.append(format_hot_topics(hot))
             except AihotError as exc:
-                logger.warning("AI HOT push: hot topics unavailable: %s", exc)
+                self.logger.warning("AI HOT push: hot topics unavailable: %s", exc)
         if not parts:
             return None
         return MessageChain().message("\n\n".join(parts))
@@ -466,7 +323,8 @@ class AihotPlugin(Star):
     # ----------------------------------------------------------------- utils
 
     async def _run(self, event, coro_factory, formatter):
-        """Run an API call with the shared error handling for all commands."""
+        """Run an API call with shared user-facing error handling."""
+
         try:
             data = await coro_factory()
         except ValueError as exc:
@@ -475,6 +333,13 @@ class AihotPlugin(Star):
             return event.plain_result(self._error_text(exc))
         return event.plain_result(formatter(data))
 
+    async def _save_config(self) -> None:
+        save = getattr(self.config, "save_config_async", None)
+        if callable(save):
+            result = save()
+            if inspect.isawaitable(result):
+                await result
+
     def _int_config(self, key: str, default: int) -> int:
         try:
             return max(1, int(self.config.get(key, default)))
@@ -482,13 +347,14 @@ class AihotPlugin(Star):
             return default
 
     def _push_schedule(self) -> tuple[int, int, str]:
-        """Resolve the push time and timezone from config, with fallbacks."""
+        """Resolve push time and timezone from config with safe fallbacks."""
+
         hh, mm = self._parse_push_time(self.config.get("push_time", DEFAULT_PUSH_TIME))
         tz = self.config.get("push_timezone", DEFAULT_PUSH_TZ)
         try:
             ZoneInfo(tz)
-        except (KeyError, ValueError):
-            logger.warning(
+        except (KeyError, TypeError, ValueError):
+            self.logger.warning(
                 "AI HOT invalid push_timezone %r; falling back to %s.",
                 tz,
                 DEFAULT_PUSH_TZ,
@@ -503,7 +369,7 @@ class AihotPlugin(Star):
             hour, minute = int(hh), int(mm)
             if not (0 <= hour <= 23 and 0 <= minute <= 59):
                 raise ValueError
-        except ValueError:
+        except (TypeError, ValueError):
             hour, minute = 8, 0
         return hour, minute
 

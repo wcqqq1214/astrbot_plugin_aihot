@@ -3,7 +3,7 @@ name = "astrbot-plugin-aihot"
 version = "1.0.1"
 description = "AI HOT AstrBot plugin: aggregates AI industry news, hot topics and daily reports"
 readme = "README.md"
-license = { text = "AGPL-3.0-or-later" }
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.12"
 # The plugin's own runtime dependencies. AstrBot (and its framework
 # dependencies) is provided by the AstrBot process the plugin runs in.
