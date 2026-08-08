@@ -57,7 +57,7 @@ cd AstrBot/data/plugins
 git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 ```
 
-启用插件后，AstrBot 会安装 `httpx` 与 `apscheduler`。插件运行时不要求 API Key，也不把 AstrBot 加入自身 runtime 依赖。
+启用插件后，AstrBot 会安装 `httpx`。插件运行时不要求 API Key，也不把 AstrBot 加入自身 runtime 依赖。
 
 ## 配置
 
@@ -74,7 +74,7 @@ git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 | AstrBot | `>=4.26.8,<5` |
 | Python | `>=3.12` |
 | HTTP 客户端 | `httpx>=0.27,<1` |
-| 定时调度 | `apscheduler>=3.10,<4`；优先使用 AstrBot `CronJobManager` 公共 API |
+| 定时调度 | AstrBot `CronJobManager` 公共 API |
 | 平台推送 | 取决于适配器主动发送能力；查询功能不依赖推送 |
 
 ## 数据流与隐私

@@ -12,7 +12,6 @@ import functools
 import inspect
 from zoneinfo import ZoneInfo
 
-from apscheduler.triggers.cron import CronTrigger
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.event.filter import CustomFilter, PermissionType
@@ -72,7 +71,7 @@ class AihotPlugin(Star):
     # the live instance when it activates the Star.
     @filter.command_group("aihot")
     def _aihot_group(self):
-        """AI HOT 聚合指令组。"""
+        """AI HOT command group."""
 
     _aihot_group.parent_group.add_custom_filter(_NotBareAihotFilter())
 
@@ -163,7 +162,8 @@ class AihotPlugin(Star):
             return event.plain_result(
                 f"已开启 AI HOT 每日推送，将于每天 {hh:02d}:{mm:02d}（{tz}）推送到本会话。"
             )
-        await self._unschedule_push()
+        if not await self._unschedule_push():
+            return event.plain_result("关闭推送失败：定时任务仍保留，未修改配置。")
         self._push_target = None
         await self.delete_kv_data(PUSH_TARGET_KV)
         self.config["push_enable"] = False
@@ -198,100 +198,91 @@ class AihotPlugin(Star):
             await self._save_config()
 
     async def terminate(self) -> None:
-        await self._unschedule_push()
+        if not await self._unschedule_push():
+            self.logger.error("AI HOT push cleanup failed during plugin termination.")
         await self._client.close()
 
     # ----------------------------------------------------------------- push
 
-    def _scheduler(self):
-        """Return the fallback APScheduler instance, if exposed by AstrBot."""
-
-        cron = getattr(self.context, "cron_manager", None)
-        return getattr(cron, "scheduler", None)
-
     async def _schedule_push(self, target: str) -> bool:
-        """Schedule one target through CronJobManager's public API when possible."""
+        """Schedule one target through CronJobManager's public API."""
 
         if not target:
             return False
         hh, mm, tz = self._push_schedule()
         cron = getattr(self.context, "cron_manager", None)
         add_basic_job = getattr(cron, "add_basic_job", None)
+        if not callable(add_basic_job):
+            self.logger.error("AI HOT push scheduling API is unavailable.")
+            return False
         old_job_id = self._push_job_id
-        if callable(add_basic_job):
-            try:
-                job_result = add_basic_job(
-                    name=PUSH_JOB_ID,
-                    cron_expression=f"{mm} {hh} * * *",
-                    handler=functools.partial(self._run_push, target),
-                    description="AI HOT experimental daily push",
-                    timezone=tz,
-                    persistent=False,
-                )
-                job = (
-                    await job_result if inspect.isawaitable(job_result) else job_result
-                )
-            except Exception as exc:  # noqa: BLE001 - command reports failure
-                self.logger.error("AI HOT push scheduling failed: %s", exc)
-                return False
-            self._push_job_id = getattr(job, "job_id", None)
-            if old_job_id and old_job_id != self._push_job_id:
-                delete_job = getattr(cron, "delete_job", None)
-                if callable(delete_job):
-                    try:
-                        result = delete_job(old_job_id)
-                        if inspect.isawaitable(result):
-                            await result
-                    except Exception as exc:  # noqa: BLE001
-                        self.logger.warning(
-                            "AI HOT old push job cleanup failed: %s", exc
-                        )
-            self.logger.info(
-                "AI HOT scheduled daily push to %s at %02d:%02d (%s).",
-                target,
-                hh,
-                mm,
-                tz,
-            )
-            return True
-
-        scheduler = self._scheduler()
-        if scheduler is None:
-            return False
         try:
-            scheduler.add_job(
-                self._run_push,
-                trigger=CronTrigger(hour=hh, minute=mm, timezone=ZoneInfo(tz)),
-                args=[target],
-                id=PUSH_JOB_ID,
-                replace_existing=True,
-                misfire_grace_time=600,
+            job_result = add_basic_job(
+                name=PUSH_JOB_ID,
+                cron_expression=f"{mm} {hh} * * *",
+                handler=functools.partial(self._run_push, target),
+                description="AI HOT experimental daily push",
+                timezone=tz,
+                persistent=False,
             )
+            job = await job_result if inspect.isawaitable(job_result) else job_result
         except Exception as exc:  # noqa: BLE001
-            self.logger.error("AI HOT fallback push scheduling failed: %s", exc)
+            self.logger.error("AI HOT push scheduling failed: %s", exc)
             return False
-        self._push_job_id = None
+        new_job_id = getattr(job, "job_id", None)
+        if not new_job_id:
+            self.logger.error("AI HOT push scheduler returned no job id.")
+            return False
+
+        if old_job_id and old_job_id != new_job_id:
+            delete_job = getattr(cron, "delete_job", None)
+            if not callable(delete_job):
+                self.logger.error("AI HOT push cleanup API is unavailable.")
+                await self._rollback_new_job(cron, new_job_id)
+                return False
+            try:
+                result = delete_job(old_job_id)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as exc:  # noqa: BLE001
+                self.logger.error("AI HOT old push job cleanup failed: %s", exc)
+                await self._rollback_new_job(cron, new_job_id)
+                return False
+
+        self._push_job_id = new_job_id
         self.logger.info(
             "AI HOT scheduled daily push to %s at %02d:%02d (%s).", target, hh, mm, tz
         )
         return True
 
-    async def _unschedule_push(self) -> None:
-        cron = getattr(self.context, "cron_manager", None)
-        if self._push_job_id:
-            delete_job = getattr(cron, "delete_job", None)
-            if callable(delete_job):
-                try:
-                    result = delete_job(self._push_job_id)
-                    if inspect.isawaitable(result):
-                        await result
-                except Exception as exc:  # noqa: BLE001
-                    self.logger.warning("AI HOT push cleanup failed: %s", exc)
-            self._push_job_id = None
+    async def _rollback_new_job(self, cron, job_id: str) -> None:
+        delete_job = getattr(cron, "delete_job", None)
+        if not callable(delete_job):
             return
-        scheduler = self._scheduler()
-        if scheduler is not None and scheduler.get_job(PUSH_JOB_ID):
-            scheduler.remove_job(PUSH_JOB_ID)
+        try:
+            result = delete_job(job_id)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("AI HOT new push job rollback failed: %s", exc)
+
+    async def _unschedule_push(self) -> bool:
+        cron = getattr(self.context, "cron_manager", None)
+        if not self._push_job_id:
+            return True
+        delete_job = getattr(cron, "delete_job", None)
+        if not callable(delete_job):
+            self.logger.error("AI HOT push cleanup API is unavailable.")
+            return False
+        try:
+            result = delete_job(self._push_job_id)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("AI HOT push cleanup failed: %s", exc)
+            return False
+        self._push_job_id = None
+        return True
 
     async def _run_push(self, target: str) -> None:
         chain = await self._build_push_message()

@@ -28,7 +28,7 @@ jobs:
       - name: Check lockfile
         run: uv lock --check
       - name: Run behavior tests
-        run: uv run python -m unittest discover -v
+        run: uv run python -m unittest tests.test_client tests.test_formatter tests.test_release_guard -v
       - name: Check synchronized versions
         run: |
           set -euo pipefail
@@ -38,3 +38,39 @@ jobs:
           test "$metadata_version" = "$project_version"
           test "$metadata_version" = "$lock_version"
           printf '%s\n' "$metadata_version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+  astrbot-integration:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}/..:${{ github.workspace }}/AstrBot
+    steps:
+      - name: Checkout plugin
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Checkout AstrBot host at v4.26.8
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: AstrBotDevs/AstrBot
+          ref: v4.26.8
+          path: AstrBot
+          persist-credentials: false
+      - name: Install host and plugin dependencies
+        run: |
+          set -euo pipefail
+          python -m venv .astrbot-venv
+          .astrbot-venv/bin/python -m pip install --disable-pip-version-check --upgrade pip
+          .astrbot-venv/bin/pip install --disable-pip-version-check -e ./AstrBot
+          .astrbot-venv/bin/pip install --disable-pip-version-check -r requirements.txt
+      - name: Run AstrBot integration tests
+        run: |
+          set -euo pipefail
+          output="$(.astrbot-venv/bin/python -m unittest tests.test_plugin_behavior -v 2>&1)" || {
+            printf '%s\n' "$output"
+            exit 1
+          }
+          printf '%s\n' "$output"
+          if printf '%s\n' "$output" | grep -q 'skipped'; then
+            echo "AstrBot integration tests must not be skipped"
+            exit 1
+          fi

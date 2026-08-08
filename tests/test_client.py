@@ -16,16 +16,16 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.sleeps: list[float] = []
 
     async def _client(self, handler) -> client.AihotClient:
-        api = client.AihotClient()
-        api._http = httpx.AsyncClient(
-            base_url=client.BASE_URL,
-            transport=httpx.MockTransport(handler),
-        )
-
         async def record_sleep(delay: float) -> None:
             self.sleeps.append(delay)
 
-        api._sleep = record_sleep
+        api = client.AihotClient(
+            http=httpx.AsyncClient(
+                base_url=client.BASE_URL,
+                transport=httpx.MockTransport(handler),
+            ),
+            sleep=record_sleep,
+        )
         return api
 
     async def test_cache_control_s_maxage_controls_revalidation(self) -> None:
@@ -110,6 +110,30 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first, second)
         self.assertEqual(self.calls, 2)
 
+    async def test_cancelled_first_waiter_keeps_single_flight_for_second(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            started.set()
+            await release.wait()
+            return httpx.Response(200, json={"items": []}, request=request)
+
+        api = await self._client(handler)
+        try:
+            first = asyncio.create_task(api.get_hot_topics())
+            await started.wait()
+            second = asyncio.create_task(api.get_hot_topics())
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            release.set()
+            self.assertEqual(await second, {"items": []})
+        finally:
+            await api.close()
+        self.assertEqual(self.calls, 1)
+
     async def test_retry_after_integer_is_honored_for_429(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             self.calls += 1
@@ -117,7 +141,7 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
                 return httpx.Response(
                     429,
                     json={"code": "busy"},
-                    headers={"retry-after": "17"},
+                    headers={"retry-after": "120"},
                     request=request,
                 )
             return httpx.Response(200, json={"items": []}, request=request)
@@ -128,7 +152,7 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await api.close()
         self.assertEqual(result, {"items": []})
-        self.assertEqual(self.sleeps, [17.0])
+        self.assertEqual(self.sleeps, [120.0])
 
     async def test_retry_after_http_date_is_honored_for_503(self) -> None:
         retry_at = datetime.now(UTC) + timedelta(seconds=20)
@@ -172,6 +196,45 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
             await api.close()
         self.assertEqual(result, {"items": [{"id": "cached"}]})
         self.assertEqual(self.calls, client.MAX_5XX_RETRIES + 2)
+
+    async def test_stale_cache_expiry_raises_after_retry_exhaustion(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            if self.calls == 1:
+                return httpx.Response(
+                    200,
+                    json={"items": [{"id": "expired"}]},
+                    headers={"cache-control": "s-maxage=0, stale-if-error=0"},
+                    request=request,
+                )
+            raise httpx.ConnectError("offline", request=request)
+
+        api = await self._client(handler)
+        try:
+            await api.get_hot_topics()
+            with self.assertRaises(client.AihotError):
+                await api.get_hot_topics()
+        finally:
+            await api.close()
+
+    async def test_cache_ttl_starts_after_response_completion(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.calls += 1
+            await asyncio.sleep(1.1)
+            return httpx.Response(
+                200,
+                json={"items": []},
+                headers={"cache-control": "s-maxage=1"},
+                request=request,
+            )
+
+        api = await self._client(handler)
+        try:
+            await api.get_hot_topics()
+            await api.get_hot_topics()
+        finally:
+            await api.close()
+        self.assertEqual(self.calls, 1)
 
     async def test_success_payload_must_be_a_json_object(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

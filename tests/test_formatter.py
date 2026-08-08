@@ -31,6 +31,17 @@ class FormatterBehaviorTests(unittest.TestCase):
         self.assertIn("2026-08-25", text)
         self.assertNotIn("仅显示前 20", text)
 
+    def test_daily_reports_omitted_sections_are_counted(self) -> None:
+        data = {
+            "report": {
+                "sections": [{"label": f"section-{i}"} for i in range(12)],
+            }
+        }
+        text = format_daily(data)
+        self.assertIn("section-0", text)
+        self.assertNotIn("section-11", text)
+        self.assertIn("另有 2 条未显示", text)
+
     def test_story_shows_recent_reports_in_api_order_and_notes_remaining(self) -> None:
         reports = [
             {"title": f"report-{i}", "links": {"original": f"https://example/{i}"}}

@@ -17,7 +17,7 @@
 ## Development environment
 
 The plugin has its own uv-managed virtualenv (`.venv`, Python 3.12.13) that
-holds **only the plugin's own dependencies** (`httpx`, `apscheduler`, plus
+holds **only the plugin's own dependencies** (`httpx`, plus
 `ruff` in the dev group). AstrBot — and all of AstrBot's framework
 dependencies — is *not* installed here; the plugin gets it from the AstrBot
 process at runtime.
@@ -34,4 +34,4 @@ interpreter and astrbot code as the deployed AstrBot:
 ```
 
 Keep the `requirements.txt` in sync with the `dependencies` list in
-`pyproject.toml` (same `httpx`/`apscheduler` constraints).
+`pyproject.toml` (same `httpx` constraints).

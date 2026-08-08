@@ -151,6 +151,7 @@ class AihotClient:
         logger: Any | None = None,
         *,
         http: httpx.AsyncClient | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         self.logger = logger or _NoopLogger()
         self._logger = self.logger
@@ -166,7 +167,7 @@ class AihotClient:
         self._inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
         self._closed = False
         # A test seam that also makes all sleeps easy to audit.
-        self._sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+        self._sleep: Callable[[float], Awaitable[None]] = sleep or asyncio.sleep
 
     async def close(self) -> None:
         """Close the underlying HTTP client and release all in-flight state."""
@@ -174,9 +175,12 @@ class AihotClient:
         if self._closed:
             return
         self._closed = True
-        for task in tuple(self._inflight.values()):
+        tasks = tuple(self._inflight.values())
+        for task in tasks:
             if not task.done():
                 task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._inflight.clear()
         await self._http.aclose()
 
@@ -274,10 +278,16 @@ class AihotClient:
 
         task = asyncio.create_task(self._fetch(url, path, cached))
         self._inflight[url] = task
+
+        def _remove_done(done: asyncio.Task[dict[str, Any]]) -> None:
+            if self._inflight.get(url) is done:
+                self._inflight.pop(url, None)
+
+        task.add_done_callback(_remove_done)
         try:
             return await asyncio.shield(task)
         finally:
-            if self._inflight.get(url) is task:
+            if task.done() and self._inflight.get(url) is task:
                 self._inflight.pop(url, None)
 
     async def _fetch(

@@ -28,62 +28,17 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
           EVENT_BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-
-          read_version() {
-            sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p' metadata.yaml | head -n 1
-          }
-
-          VERSION="$(read_version)"
-          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::metadata.yaml must contain strict SemVer X.Y.Z"
-            exit 1
-          fi
-
-          PYPROJECT_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' pyproject.toml | head -n 1)"
-          LOCK_VERSION="$(awk '
-            $0 == "name = \"astrbot-plugin-aihot\"" { in_plugin = 1; next }
-            in_plugin && /^version = / { gsub(/[\"]/, "", $3); print $3; exit }
-            in_plugin && /^\[\[package\]\]/ { exit }
-          ' uv.lock)"
-          if [[ "$PYPROJECT_VERSION" != "$VERSION" || "$LOCK_VERSION" != "$VERSION" ]]; then
-            echo "::error::metadata.yaml, pyproject.toml and uv.lock versions differ"
-            exit 1
-          fi
-
-          OLD_VERSION="none"
-          if [[ "$EVENT_NAME" != "workflow_dispatch" ]]; then
-            if [[ "$EVENT_BEFORE" =~ ^0+$ ]]; then
-              OLD_VERSION="0.0.0"
-            else
-              OLD_VERSION="$(git show "$EVENT_BEFORE:metadata.yaml" 2>/dev/null | sed -n 's/^version:[[:space:]]*\([^ #]*\).*/\1/p' | head -n 1)"
-              OLD_VERSION="${OLD_VERSION:-0.0.0}"
-            fi
-            if [[ ! "$OLD_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-              echo "::error::previous metadata version is not strict SemVer"
-              exit 1
-            fi
-            if [[ "$VERSION" == "$OLD_VERSION" ]]; then
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-              echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-              echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            IFS=. read -r old_major old_minor old_patch <<< "$OLD_VERSION"
-            IFS=. read -r new_major new_minor new_patch <<< "$VERSION"
-            if (( new_major < old_major ||
-                  (new_major == old_major && new_minor < old_minor) ||
-                  (new_major == old_major && new_minor == old_minor && new_patch <= old_patch) )); then
-              echo "::error::new version $VERSION must be greater than $OLD_VERSION"
-              exit 1
-            fi
-          fi
-
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+          python .github/scripts/release_guard.py version \
+            --event-name "$EVENT_NAME" \
+            --event-ref "$EVENT_REF" \
+            --event-before "$EVENT_BEFORE" \
+            --metadata metadata.yaml \
+            --pyproject pyproject.toml \
+            --lock uv.lock >> "$GITHUB_OUTPUT"
 
   create-release:
     needs: check-version
@@ -107,14 +62,9 @@ jobs:
       - name: Fail closed for existing tag or release
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code --refs origin "refs/tags/${NEW_VERSION}" >/dev/null 2>&1; then
-            echo "::error::tag ${NEW_VERSION} already exists; refusing to overwrite it"
-            exit 1
-          fi
-          if gh release view "$NEW_VERSION" >/dev/null 2>&1; then
-            echo "::error::release ${NEW_VERSION} already exists; refusing to overwrite it"
-            exit 1
-          fi
+          python .github/scripts/release_guard.py remote \
+            --repository "$REPOSITORY" \
+            --version "$NEW_VERSION"
 
       - name: Package plugin
         run: |
