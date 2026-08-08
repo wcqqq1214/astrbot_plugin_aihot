@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-aihot"
-version = "1.0.1"
+version = "1.0.2"
 description = "AI HOT AstrBot plugin: aggregates AI industry news, hot topics and daily reports"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
