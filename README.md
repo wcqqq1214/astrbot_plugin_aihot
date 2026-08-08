@@ -1,7 +1,7 @@
 <h1 align="center">astrbot_plugin_aihot</h1>
 
 <p align="center">
-  <a href="https://github.com/wcqqq1214/astrbot_plugin_aihot/releases/tag/1.0.2"><img src="https://img.shields.io/badge/version-1.0.2-4b8bbe?style=flat-square" alt="Version 1.0.2"></a>
+  <a href="https://github.com/wcqqq1214/astrbot_plugin_aihot/releases/tag/1.0.3"><img src="https://img.shields.io/badge/version-1.0.3-4b8bbe?style=flat-square" alt="Version 1.0.3"></a>
   <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-%E2%89%A54.26.8-4b8bbe?style=flat-square" alt="AstrBot ≥ 4.26.8"></a>
   <img src="https://img.shields.io/badge/Python-%E2%89%A53.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python ≥ 3.12">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square" alt="License: AGPL-3.0-or-later"></a>
