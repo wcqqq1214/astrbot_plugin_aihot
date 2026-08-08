@@ -11,7 +11,7 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     env:
-      UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+      UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
     steps:
       - name: Checkout code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -28,7 +28,7 @@ jobs:
       - name: Check lockfile
         run: uv lock --check
       - name: Run behavior tests
-        run: uv run python -m unittest tests.test_client tests.test_formatter tests.test_release_guard -v
+        run: uv run python -m unittest tests.test_client tests.test_formatter tests.test_release_guard tests.test_workflow_config -v
       - name: Check synchronized versions
         run: |
           set -euo pipefail
