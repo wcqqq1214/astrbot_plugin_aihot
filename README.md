@@ -1,7 +1,14 @@
-# astrbot_plugin_aihot
+<h1 align="center">astrbot_plugin_aihot</h1>
 
-[![AstrBot ≥ 4.26.8](https://img.shields.io/badge/AstrBot-%E2%89%A54.26.8-4b8bbe)](https://github.com/AstrBotDevs/AstrBot)
-[![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE)
+<p align="center">
+  <a href="https://github.com/wcqqq1214/astrbot_plugin_aihot/releases/tag/1.0.2"><img src="https://img.shields.io/badge/version-1.0.2-4b8bbe?style=flat-square" alt="Version 1.0.2"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AstrBotDevs/AstrBot"><img src="https://img.shields.io/badge/AstrBot-%E2%89%A54.26.8-4b8bbe?style=flat-square" alt="AstrBot ≥ 4.26.8"></a>
+  <img src="https://img.shields.io/badge/Python-%E2%89%A53.12-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python ≥ 3.12">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square" alt="License: AGPL-3.0-or-later"></a>
+</p>
 
 一个面向 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 的 AI HOT 客户端插件：通过 AI HOT 的匿名、只读 REST API v1 展示 AI 行业动态、热点榜、日报和事件详情。
 
@@ -67,16 +74,6 @@ git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 - `push_timezone`：IANA 时区（默认 `Asia/Shanghai`）
 - `push_include_hot`：推送是否附带热点榜（默认 `true`）
 
-## 兼容矩阵
-
-| 组件 | 支持范围 |
-| --- | --- |
-| AstrBot | `>=4.26.8,<5` |
-| Python | `>=3.12` |
-| HTTP 客户端 | `httpx>=0.27,<1` |
-| 定时调度 | AstrBot `CronJobManager` 公共 API |
-| 平台推送 | 取决于适配器主动发送能力；查询功能不依赖推送 |
-
 ## 数据流与隐私
 
 - 查询词 `q` 会发送到 `https://aihot.virxact.com/api/v1/items`；仅发送本次命令所需参数。
@@ -94,18 +91,6 @@ git clone https://github.com/wcqqq1214/astrbot_plugin_aihot
 - <https://aihot.virxact.com/terms>
 - <https://aihot.virxact.com/agent>
 - <https://aihot.virxact.com/openapi-v1.json>
-
-## 开发
-
-```bash
-uv sync
-uv run ruff format .
-uv run ruff check .
-uv lock --check
-uv run python -m unittest discover -v
-```
-
-插件只把运行数据交给 AstrBot `data` 目录的 KV 存储；代码目录不用于持久化用户数据。
 
 ## 许可证与声明
 
