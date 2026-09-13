@@ -18,13 +18,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
-BASE_URL = "https://aihot.virxact.com"
+BASE_URL = "https://aihot.news"
 
 # Server-side shared-cache defaults.  A response Cache-Control s-maxage wins
 # over these values for the URL that returned it.
 THROTTLE_SECONDS: dict[str, int] = {
     "/api/v1/items": 60,
     "/api/v1/hot-topics": 300,
+    "/api/v1/codex-resets": 300,
 }
 DEFAULT_THROTTLE_SECONDS = 30
 DEFAULT_STALE_IF_ERROR_SECONDS = 300
@@ -463,6 +464,33 @@ class AihotClient:
         """Current multi-source Top 10 hot-topic board."""
 
         return await self._get("/api/v1/hot-topics")
+
+    async def get_codex_resets(self) -> dict:
+        """Fetch the complete reset calendar snapshot without query parameters."""
+
+        data = await self._get("/api/v1/codex-resets")
+        events = data.get("events")
+        if (
+            data.get("schemaVersion") != 1
+            or not isinstance(events, list)
+            or any(
+                not isinstance(event, dict)
+                or not isinstance(event.get("id"), str)
+                or not event["id"]
+                or event.get("type") not in ("direct_reset", "reset_credit")
+                or event.get("status") not in ("announced", "confirmed")
+                or not isinstance(event.get("posts"), list)
+                or any(not isinstance(post, dict) for post in event["posts"])
+                or (
+                    event.get("schedule") is not None
+                    and not isinstance(event["schedule"], dict)
+                )
+                for event in events
+            )
+            or len({event["id"] for event in events}) != len(events)
+        ):
+            raise AihotError("AI HOT returned an invalid Codex reset snapshot")
+        return data
 
     # ----------------------------------------------------------------- stories
 

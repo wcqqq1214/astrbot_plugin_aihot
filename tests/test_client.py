@@ -11,6 +11,59 @@ import client
 
 
 class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reset_snapshot_uses_no_query_and_revalidates_etag(self) -> None:
+        payload = {"schemaVersion": 1, "events": []}
+
+        def handler(request):
+            self.calls += 1
+            self.assertEqual(request.url.path, "/api/v1/codex-resets")
+            self.assertFalse(request.url.query)
+            if self.calls == 1:
+                return httpx.Response(
+                    200,
+                    json=payload,
+                    headers={"etag": '"reset-v1"', "cache-control": "s-maxage=0"},
+                )
+            self.assertEqual(request.headers["if-none-match"], '"reset-v1"')
+            return httpx.Response(304, headers={"cache-control": "s-maxage=300"})
+
+        api = await self._client(handler)
+        try:
+            self.assertEqual(await api.get_codex_resets(), payload)
+            self.assertEqual(await api.get_codex_resets(), payload)
+            await api.get_codex_resets()
+            self.assertEqual(self.calls, 2)
+            self.assertEqual(api._default_freshness("/api/v1/codex-resets"), 300)
+        finally:
+            await api.close()
+
+    async def test_reset_snapshot_rejects_invalid_data_before_deduplication(
+        self,
+    ) -> None:
+        valid_event = {
+            "id": "one",
+            "type": "direct_reset",
+            "status": "announced",
+            "posts": [],
+        }
+        for payload in (
+            {},
+            {"schemaVersion": 2, "events": []},
+            {"schemaVersion": 1, "events": [None]},
+            {"schemaVersion": 1, "events": [valid_event, valid_event]},
+            {"schemaVersion": 1, "events": [{**valid_event, "schedule": "invalid"}]},
+            {"schemaVersion": 1, "events": [{**valid_event, "posts": [None]}]},
+        ):
+            with self.subTest(payload=payload):
+                api = await self._client(
+                    lambda request, payload=payload: httpx.Response(200, json=payload)
+                )
+                try:
+                    with self.assertRaises(client.AihotError):
+                        await api.get_codex_resets()
+                finally:
+                    await api.close()
+
     async def asyncSetUp(self) -> None:
         self.calls = 0
         self.sleeps: list[float] = []

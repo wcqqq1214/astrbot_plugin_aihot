@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
-ATTR_TEXT = "数据来源：AI HOT（https://aihot.virxact.com/）"
+ATTR_TEXT = "数据来源：AI HOT（https://aihot.news/）"
 MAX_MESSAGE_CHARS = 12_000
 MAX_ITEMS_PER_REPLY = 30
 MAX_DAILY_SECTIONS = 10
@@ -14,6 +16,8 @@ MAX_DAILIES_INDEX_ENTRIES = 180
 MAX_STORY_REPORTS = 10
 MAX_FIELD_CHARS = 800
 MAX_LINK_CHARS = 1_500
+MAX_RESET_EVENTS = 30
+MAX_RESET_POSTS = 3
 
 CATEGORY_LABELS = {
     "ai-models": "模型",
@@ -256,3 +260,108 @@ def format_story(data: dict) -> str:
             f"…（时间线仅显示最近 {visible} 条，另有 {len(reports) - visible} 条省略）"
         )
     return _finish(lines)
+
+
+def _beijing_time(value: Any) -> str:
+    """Keep unknown times unknown and convert offset timestamps to Beijing."""
+
+    if not value:
+        return "未知"
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            return _clip(value, 80)
+        return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return _clip(value, 80)
+
+
+def _reset_event_time(event: dict) -> datetime:
+    """Rank by occurrence, confirmation or announcement, never editorial updates."""
+
+    for value in (
+        event.get("occurredOn"),
+        event.get("confirmedAt"),
+        event.get("createdAt"),
+    ):
+        if not value:
+            continue
+        try:
+            parsed = datetime.fromisoformat(str(value))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        return parsed.astimezone(UTC)
+    return datetime.min.replace(tzinfo=UTC)
+
+
+def format_latest_codex_reset(data: dict) -> str:
+    """Show only the latest event; snapshot update order can include old corrections."""
+
+    events = data.get("events") or []
+    latest = max(events, key=_reset_event_time) if events else None
+    return format_codex_resets(
+        {**data, "events": [latest] if latest else []}, 1
+    ).replace("Codex 重置记录", "Codex 最新重置", 1)
+
+
+def format_codex_resets(
+    data: dict, show: int = 5, *, notification: bool = False
+) -> str:
+    """Render reset events in snapshot order, preserving timing semantics."""
+
+    events = data.get("events") or []
+    visible = min(max(1, show), MAX_RESET_EVENTS, len(events))
+    lines = [
+        "AI HOT · Tibo / Codex 重置记录（北京时间）",
+        f"上游最近核验：{_beijing_time(data.get('checkedAt'))}",
+    ]
+    if notification:
+        lines.insert(0, "【重置监控：新增或更新】")
+    if not events:
+        lines.append("暂无公开重置记录。")
+    for event in events[:visible]:
+        label = {"direct_reset": "全员重置", "reset_credit": "发重置卡"}.get(
+            event.get("type"), "重置"
+        )
+        status = {"announced": "预告", "confirmed": "已确认"}.get(
+            event.get("status"), "未知"
+        )
+        lines.append(f"\n【{label}｜{status}】{_clip(event.get('title'))}")
+        if event.get("scope"):
+            lines.append(f"适用范围：{_clip(event['scope'])}")
+        schedule = event.get("schedule") or {}
+        if schedule:
+            estimate = _clip(schedule.get("label")) or (
+                f"{_beijing_time(schedule.get('from'))} 至 "
+                f"{_beijing_time(schedule.get('through'))}"
+            )
+            lines.append(f"原始预告（非实际执行时间）：{estimate}")
+        lines.append(f"已核实发生日期：{_clip(event.get('occurredOn'), 80) or '未知'}")
+        if event.get("confirmedAt"):
+            lines.append(
+                "确认帖时间（非精确执行时间）：" + _beijing_time(event["confirmedAt"])
+            )
+        elif event.get("status") == "confirmed":
+            basis = (
+                "回执核验"
+                if event.get("confirmationBasis") == "receipt_review"
+                else "已确认"
+            )
+            lines.append(f"确认依据：{basis}；确认帖时间未知。")
+        posts = event.get("posts") or []
+        for post in posts[:MAX_RESET_POSTS]:
+            lines.append(
+                f"· {_clip(post.get('stage'), 80) or '来源帖'}"
+                f"（{_beijing_time(post.get('publishedAt'))}）"
+            )
+            lines.append(f"  {_clip(post.get('text'))}")
+            if post.get("url"):
+                lines.append(f"  原帖：{_clip(post['url'], MAX_LINK_CHARS)}")
+        if len(posts) > MAX_RESET_POSTS:
+            lines.append(f"…（另有 {len(posts) - MAX_RESET_POSTS} 条来源帖未显示）")
+        if event.get("url"):
+            lines.append(f"详情：{_clip(event['url'], MAX_LINK_CHARS)}")
+    lines.append("\n日历：https://aihot.news/codex-reset")
+    return _finish(lines, omitted=len(events) - visible)

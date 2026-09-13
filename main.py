@@ -25,8 +25,10 @@ from .formatter import (
     format_daily,
     format_hot_topics,
     format_items,
+    format_latest_codex_reset,
     format_story,
 )
+from .reset_monitor import ResetMonitor
 
 PUSH_JOB_ID = "aihot_daily_push"
 PUSH_TARGET_KV = "aihot_push_target"
@@ -57,9 +59,12 @@ def _help_text() -> str:
         "· /aihot dailies [数量] 日报索引\n"
         "· /aihot story <publicId> 事件详情\n"
         "· /aihot search <关键词> 关键词搜索\n"
+        "· /aihot reset 最新 Codex 重置/发卡状态\n"
+        "· /aihot resetwatch on/off/status 重置监控（管理员）\n"
         "· /aihot push on 开启实验性每日推送（管理员）\n"
         "· /aihot push off 关闭实验性每日推送（管理员）\n"
         "\n推送首次必须在目标会话执行 push on；当前仅保存一个目标，后一次开启会覆盖前一次。"
+        "\n重置监控每 5 分钟检查，首次开启不推送历史；独立保存一个目标会话。"
         "\n" + ATTR_TEXT
     )
 
@@ -170,18 +175,65 @@ class AihotPlugin(Star):
         await self._save_config()
         return event.plain_result("已关闭 AI HOT 每日推送。")
 
+    @_aihot_group.command("reset")
+    async def _aihot_reset(self, event: AstrMessageEvent):
+        return await self._run(
+            event,
+            self._client.get_codex_resets,
+            format_latest_codex_reset,
+        )
+
+    @_aihot_group.command("resetwatch")
+    @filter.permission_type(PermissionType.ADMIN)
+    async def _aihot_resetwatch(self, event: AstrMessageEvent, action: str = "status"):
+        if action == "status":
+            state = self._reset_monitor.state
+            if not state:
+                return event.plain_result("AI HOT 重置监控：未开启。")
+            location = (
+                "本会话"
+                if state["target"] == getattr(event, "unified_msg_origin", None)
+                else "其他会话"
+            )
+            return event.plain_result(
+                f"AI HOT 重置监控：已开启，目标为{location}，每 5 分钟检查。"
+            )
+        if action not in ("on", "off"):
+            return event.plain_result("用法：/aihot resetwatch on/off/status")
+        try:
+            if action == "off":
+                await self._reset_monitor.disable()
+                return event.plain_result("已关闭 AI HOT 重置监控。")
+            target = str(getattr(event, "unified_msg_origin", "") or "").strip()
+            if not target:
+                return event.plain_result("开启失败：当前会话没有可保存的目标。")
+            await self._reset_monitor.enable(target)
+        except AihotError as exc:
+            return event.plain_result(self._error_text(exc))
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error("AI HOT reset watch configuration failed: %s", exc)
+            return event.plain_result("重置监控设置失败，请查看插件日志后重试。")
+        return event.plain_result(
+            "已开启 AI HOT 重置监控，每 5 分钟检查并通知本会话；"
+            "首次开启不推送历史记录，仅保存一个目标会话。"
+        )
+
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context)
         self.config = config if config is not None else AstrBotConfig()
         self._client = AihotClient(logger=self.logger)
+        self._reset_monitor = self._make_reset_monitor()
         self._push_target: str | None = None
         self._push_job_id: str | None = None
 
     async def initialize(self) -> None:
         """Recreate the HTTP client and restore a valid scheduled push."""
 
+        await self._reset_monitor.close()
         await self._client.close()
         self._client = AihotClient(logger=self.logger)
+        self._reset_monitor = self._make_reset_monitor()
+        await self._reset_monitor.restore()
         self._push_target = await self.get_kv_data(PUSH_TARGET_KV, None)
         if not self.config.get("push_enable", False):
             return
@@ -198,9 +250,23 @@ class AihotPlugin(Star):
             await self._save_config()
 
     async def terminate(self) -> None:
+        await self._reset_monitor.close()
         if not await self._unschedule_push():
             self.logger.error("AI HOT push cleanup failed during plugin termination.")
         await self._client.close()
+
+    def _make_reset_monitor(self) -> ResetMonitor:
+        return ResetMonitor(
+            self._client,
+            load_state=lambda key, default: self.get_kv_data(key, default),
+            save_state=lambda key, value: self.put_kv_data(key, value),
+            delete_state=lambda key: self.delete_kv_data(key),
+            send=self._send_reset_notification,
+            logger=self.logger,
+        )
+
+    async def _send_reset_notification(self, target: str, text: str) -> bool:
+        return await self.context.send_message(target, MessageChain().message(text))
 
     # ----------------------------------------------------------------- push
 
