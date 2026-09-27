@@ -14,7 +14,14 @@ POLL_SECONDS = 300
 
 
 def _fingerprint(event: dict) -> str:
-    # Scan timestamps and bookkeeping edits alone must not send notifications.
+    # Hash exactly the bounded notification, excluding the scan watermark.
+    text = format_codex_resets({"events": [event]}, 1, notification=True)
+    return "display-v2:" + hashlib.sha256(text.encode()).hexdigest()
+
+
+def _legacy_fingerprint(event: dict) -> str:
+    """Recognize unchanged v1 entries without replaying history on upgrade."""
+
     content = {
         key: value
         for key, value in event.items()
@@ -115,7 +122,11 @@ class ResetMonitor:
             acknowledged = {k: v for k, v in previous.items() if k in current}
             for event in data["events"]:
                 fingerprint = _fingerprint(event)
-                if previous.get(event["id"]) == fingerprint:
+                old_fingerprint = previous.get(event["id"])
+                if old_fingerprint == fingerprint:
+                    continue
+                if old_fingerprint == _legacy_fingerprint(event):
+                    acknowledged[event["id"]] = fingerprint
                     continue
                 text = format_codex_resets(
                     {**data, "events": [event]}, 1, notification=True

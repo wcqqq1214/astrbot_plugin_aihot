@@ -52,6 +52,8 @@ class AihotClientBehaviorTests(unittest.IsolatedAsyncioTestCase):
             {"schemaVersion": 1, "events": [None]},
             {"schemaVersion": 1, "events": [valid_event, valid_event]},
             {"schemaVersion": 1, "events": [{**valid_event, "schedule": "invalid"}]},
+            {"schemaVersion": 1, "events": [{**valid_event, "presentation": []}]},
+            {"schemaVersion": 1, "events": [{**valid_event, "estimate": "invalid"}]},
             {"schemaVersion": 1, "events": [{**valid_event, "posts": [None]}]},
         ):
             with self.subTest(payload=payload):

@@ -322,22 +322,56 @@ def format_codex_resets(
     if not events:
         lines.append("暂无公开重置记录。")
     for event in events[:visible]:
-        label = {"direct_reset": "全员重置", "reset_credit": "发重置卡"}.get(
-            event.get("type"), "重置"
-        )
-        status = {"announced": "预告", "confirmed": "已确认"}.get(
-            event.get("status"), "未知"
-        )
+        presentation = event.get("presentation") or {}
+        label = _clip(event.get("displayLabel")) or {
+            "direct_reset": "重置（形式未明确）",
+            "reset_credit": "发重置卡",
+        }.get(event.get("type"), "重置（形式未明确）")
+        status = {
+            "announced": "预告",
+            "in_progress": "进行中（尚未确认完成）",
+            "confirmed": "已确认",
+            "expired_unconfirmed": "预计窗口已过（尚未确认）",
+            "likely_completed": "推测已完成（非官方确认）",
+        }.get(presentation.get("status") or event.get("status"), "未知")
         lines.append(f"\n【{label}｜{status}】{_clip(event.get('title'))}")
-        if event.get("scope"):
-            lines.append(f"适用范围：{_clip(event['scope'])}")
+        # A qualified but unknown scope must not fall back to a legacy claim.
+        scope = presentation.get("scopeLabel") if presentation else event.get("scope")
+        if presentation.get("scopeKnown") is False:
+            scope = None
+        lines.append(f"适用范围：{_clip(scope) or '未明确'}")
+        if presentation.get("productsZh"):
+            lines.append(f"适用产品：{_clip(presentation['productsZh'])}")
+        if presentation.get("reportedAt"):
+            lines.append(
+                "开始生效公告时间（非到账或完成时间）："
+                + _beijing_time(presentation["reportedAt"])
+            )
         schedule = event.get("schedule") or {}
         if schedule:
-            estimate = _clip(schedule.get("label")) or (
+            announced_time = _clip(schedule.get("label")) or (
                 f"{_beijing_time(schedule.get('from'))} 至 "
                 f"{_beijing_time(schedule.get('through'))}"
             )
-            lines.append(f"原始预告（非实际执行时间）：{estimate}")
+            lines.append(f"原始预告（非实际执行时间）：{announced_time}")
+            if presentation.get("timeInferred"):
+                lines.append("预告时间换算含日期或时区推断。")
+        estimate = event.get("estimate") or {}
+        if estimate:
+            window = _clip(estimate.get("label")) or (
+                f"{_beijing_time(estimate.get('from'))} 至 "
+                f"{_beijing_time(estimate.get('through'))}"
+            )
+            lines.append(f"预计生效（仅供参考，以实际到账为准）：{window}")
+            basis = {
+                "model": "模型推算",
+                "source": "来源时间",
+                "source_day": "来源日期推算",
+                "history": "历史规律推算",
+            }.get(estimate.get("basis"), "未知")
+            lines.append(f"预计依据：{basis}")
+            if estimate.get("reason"):
+                lines.append(f"预计说明：{_clip(estimate['reason'])}")
         lines.append(f"已核实发生日期：{_clip(event.get('occurredOn'), 80) or '未知'}")
         if event.get("confirmedAt"):
             lines.append(
@@ -356,7 +390,15 @@ def format_codex_resets(
                 f"· {_clip(post.get('stage'), 80) or '来源帖'}"
                 f"（{_beijing_time(post.get('publishedAt'))}）"
             )
-            lines.append(f"  {_clip(post.get('text'))}")
+            lines.append(
+                "  "
+                + _clip(
+                    post.get("fullText")
+                    or post.get("text")
+                    or post.get("fullOriginalText")
+                    or post.get("originalText")
+                )
+            )
             if post.get("url"):
                 lines.append(f"  原帖：{_clip(post['url'], MAX_LINK_CHARS)}")
         if len(posts) > MAX_RESET_POSTS:

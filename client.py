@@ -481,9 +481,9 @@ class AihotClient:
                 or event.get("status") not in ("announced", "confirmed")
                 or not isinstance(event.get("posts"), list)
                 or any(not isinstance(post, dict) for post in event["posts"])
-                or (
-                    event.get("schedule") is not None
-                    and not isinstance(event["schedule"], dict)
+                or any(
+                    event.get(key) is not None and not isinstance(event[key], dict)
+                    for key in ("schedule", "presentation", "estimate")
                 )
                 for event in events
             )

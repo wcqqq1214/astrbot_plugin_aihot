@@ -14,6 +14,101 @@ from formatter import (
 
 
 class FormatterBehaviorTests(unittest.TestCase):
+    def test_reset_uses_qualified_label_and_preserves_unknown_scope(self):
+        event = {
+            "type": "direct_reset",
+            "status": "announced",
+            "displayLabel": "重置（形式未明确）",
+            "scope": "所有用户",
+            "presentation": {"scopeKnown": False, "scopeLabel": None},
+        }
+        text = format_codex_resets({"events": [event]})
+        self.assertIn("重置（形式未明确）｜预告", text)
+        self.assertIn("适用范围：未明确", text)
+        self.assertNotIn("全员", text)
+        self.assertNotIn("所有用户", text)
+        event.pop("displayLabel")
+        event["presentation"] = None
+        text = format_codex_resets({"events": [event]})
+        self.assertNotIn("全员", text)
+        self.assertIn("适用范围：所有用户", text)
+
+    def test_reset_qualified_scope_keeps_conditions_separate_from_products(self):
+        text = format_codex_resets(
+            {
+                "events": [
+                    {
+                        "type": "direct_reset",
+                        "displayLabel": "额度重置",
+                        "scope": "所有用户",
+                        "presentation": {
+                            "status": "in_progress",
+                            "scopeKnown": True,
+                            "scopeLabel": "所有付费用户（符合原帖条件）",
+                            "audienceZh": "所有付费用户",
+                            "productsZh": "Codex、ChatGPT Work",
+                            "reportedAt": "2026-09-26T00:00:00Z",
+                        },
+                    }
+                ]
+            }
+        )
+        self.assertIn("额度重置｜进行中（尚未确认完成）", text)
+        self.assertIn("适用范围：所有付费用户（符合原帖条件）", text)
+        self.assertIn("适用产品：Codex、ChatGPT Work", text)
+        self.assertIn("开始生效公告时间（非到账或完成时间）：2026-09-26 08:00", text)
+
+    def test_reset_estimates_and_inferred_statuses_are_not_confirmations(self):
+        for status, label in (
+            ("expired_unconfirmed", "预计窗口已过（尚未确认）"),
+            ("likely_completed", "推测已完成（非官方确认）"),
+        ):
+            with self.subTest(status=status):
+                text = format_codex_resets(
+                    {
+                        "events": [
+                            {
+                                "status": "announced",
+                                "presentation": {
+                                    "status": status,
+                                    "timeInferred": True,
+                                },
+                                "schedule": {"label": "下周"},
+                                "estimate": {
+                                    "from": "2026-09-29T19:00:00Z",
+                                    "through": "2026-09-30T19:00:00Z",
+                                    "basis": "model",
+                                    "reason": "未给具体日期",
+                                },
+                            }
+                        ]
+                    }
+                )
+                self.assertIn(label, text)
+                self.assertIn("原始预告（非实际执行时间）：下周", text)
+                self.assertIn("预告时间换算含日期或时区推断", text)
+                self.assertIn(
+                    "预计生效（仅供参考，以实际到账为准）：2026-09-30 03:00 至 2026-10-01 03:00",
+                    text,
+                )
+                self.assertIn("预计依据：模型推算", text)
+                self.assertIn("预计说明：未给具体日期", text)
+                self.assertIn("已核实发生日期：未知", text)
+                self.assertNotIn("确认帖时间", text)
+                self.assertNotIn("｜已确认", text)
+
+    def test_reset_prefers_full_translation_with_excerpt_and_original_fallbacks(self):
+        for post, expected in (
+            ({"fullText": "完整译文", "text": "节选"}, "完整译文"),
+            ({"fullText": None, "text": "节选"}, "节选"),
+            ({"fullOriginalText": "Original post"}, "Original post"),
+        ):
+            with self.subTest(post=post):
+                text = format_codex_resets({"events": [{"posts": [post]}]})
+                self.assertIn(expected, text)
+                if post.get("fullText"):
+                    self.assertNotIn("节选", text)
+
     def test_latest_reset_ignores_recent_edits_to_old_events(self):
         text = format_latest_codex_reset(
             {

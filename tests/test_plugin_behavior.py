@@ -251,6 +251,69 @@ class ResetMonitorBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.send.await_count, 3)
         self.assertEqual(self.send.call_args.args[0], "session")
 
+    async def test_display_changes_notify_but_hidden_metadata_is_silent(self):
+        await self.monitor.enable("session")
+        event = self.payload["events"][0]
+        event["presentation"] = {"status": "in_progress"}
+        await self.monitor.poll()
+        self.assertIn("进行中", self.send.call_args.args[1])
+        event["estimate"] = {"label": "明天", "basis": "history"}
+        await self.monitor.poll()
+        self.assertIn("预计生效", self.send.call_args.args[1])
+        self.assertIn("明天", self.send.call_args.args[1])
+        event["presentation"]["status"] = "likely_completed"
+        await self.monitor.poll()
+        self.assertIn("推测已完成（非官方确认）", self.send.call_args.args[1])
+        self.assertEqual(self.send.await_count, 3)
+        event["presentation"]["internalFutureField"] = "ignored"
+        event["updatedAt"] = "2026-09-28T00:00:00Z"
+        self.payload["checkedAt"] = "2026-09-28T00:00:00Z"
+        await self.monitor.poll()
+        self.assertEqual(self.send.await_count, 3)
+
+    async def test_legacy_fingerprints_migrate_without_replaying_unchanged_history(
+        self,
+    ):
+        import hashlib
+        import json
+
+        from astrbot_plugin_aihot.reset_monitor import RESET_STATE_KV
+
+        # Construct persisted hashes using the released v1 format.
+        self.payload["events"].append(self.event("changed", title="Before"))
+        fingerprints = {}
+        for event in self.payload["events"]:
+            content = {
+                k: v
+                for k, v in event.items()
+                if k not in ("id", "createdAt", "updatedAt")
+            }
+            fingerprints[event["id"]] = hashlib.sha256(
+                json.dumps(content, ensure_ascii=False, sort_keys=True).encode()
+            ).hexdigest()
+        self.stored[RESET_STATE_KV] = {
+            "version": 1,
+            "target": "session",
+            "fingerprints": fingerprints,
+        }
+        self.payload["events"][0]["updatedAt"] = "2026-09-28T00:00:00Z"
+        self.payload["events"][1]["title"] = "After"
+        await self.monitor.restore()
+        await self.monitor.poll()
+        self.send.assert_awaited_once()
+        self.assertIn("After", self.send.call_args.args[1])
+        self.assertTrue(
+            all(
+                v.startswith("display-v2:")
+                for v in self.stored[RESET_STATE_KV]["fingerprints"].values()
+            )
+        )
+        await self.monitor.close()
+        restored = self.make_monitor()
+        await restored.restore()
+        await restored.poll()
+        self.send.assert_awaited_once()
+
     async def test_partial_delivery_failure_retries_only_unacknowledged_event(self):
         await self.monitor.enable("session")
         self.payload["events"].extend(
